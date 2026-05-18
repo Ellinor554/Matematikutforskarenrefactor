@@ -1,5 +1,3 @@
-import { VolumeEngine } from './VolumeEngine.js';
-
 // Beaker geometry constants (mirror index-old.html)
 const BEAKER_H      = 500; // px – total beaker body height
 const BEAKER_W      = 200; // px – beaker body width
@@ -244,7 +242,10 @@ export class VolumeView {
         // Empty button
         const emptyBtn = document.createElement('button');
         emptyBtn.className = 'bg-soft-text hover:bg-soft-muted text-white p-2 rounded-lg text-sm font-semibold mt-auto';
-        emptyBtn.innerHTML = '<i class="fas fa-trash mr-1"></i> Töm behållaren';
+        const trashIcon = document.createElement('i');
+        trashIcon.className = 'fas fa-trash mr-1';
+        emptyBtn.appendChild(trashIcon);
+        emptyBtn.appendChild(document.createTextNode(' Töm behållaren'));
         emptyBtn.addEventListener('click', () => this.#engine.empty());
         sidebar.appendChild(emptyBtn);
 
@@ -300,10 +301,23 @@ export class VolumeView {
 
         const body = document.createElement('div');
         body.className = 'text-sm text-soft-muted space-y-1 leading-relaxed';
-        body.innerHTML =
-            '<p>1 <strong class="text-soft-text">L</strong> = 10 dl = 100 cl = 1\u00a0000 ml</p>' +
-            '<p>1 <strong class="text-soft-text">dl</strong> = 10 cl = 100 ml</p>' +
-            '<p>1 <strong class="text-soft-text">cl</strong> = 10 ml</p>';
+
+        const unitRows = [
+            ['L',  '= 10 dl = 100 cl = 1\u00a0000 ml'],
+            ['dl', '= 10 cl = 100 ml'],
+            ['cl', '= 10 ml'],
+        ];
+        for (const [unit, rest] of unitRows) {
+            const p = document.createElement('p');
+            p.appendChild(document.createTextNode('1 '));
+            const strong = document.createElement('strong');
+            strong.className = 'text-soft-text';
+            strong.textContent = unit;
+            p.appendChild(strong);
+            p.appendChild(document.createTextNode(' ' + rest));
+            body.appendChild(p);
+        }
+
         this.#enhetsBody = body;
         panel.appendChild(body);
 
