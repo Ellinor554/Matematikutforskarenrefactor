@@ -269,11 +269,6 @@ export class FractionsView {
         ws.className = 'flex-1 relative overflow-hidden bg-white';
         ws.style.cssText = 'position:relative;overflow:hidden;';
         this.#workspace = ws;
-
-        // Workspace-level pointer handlers (redundant with document listeners but kept for clarity)
-        ws.addEventListener('pointermove',   this.#boundOnMove);
-        ws.addEventListener('pointerup',     this.#boundOnUp);
-        ws.addEventListener('pointercancel', this.#boundOnUp);
         return ws;
     }
 

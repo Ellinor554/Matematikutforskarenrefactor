@@ -5,6 +5,8 @@ const LINE_Y     = 65;
 const PAD        = 55;
 const MARKER_SIZE = 44;
 const ARROW_H    = 38; // height of marker label + tip above the line
+/** Wait for browser layout to stabilise before calling getBoundingClientRect(). */
+const LAYOUT_STABILIZATION_DELAY = 80;
 
 /** Unique counter for radio-button group names per NumberLinesView instance. */
 let _instanceCount = 0;
@@ -312,7 +314,7 @@ export class NumberLinesView {
             this.#updateMarkerPosition(min);
             this.#prevVal = null;
             if (this.#deltaEl) this.#deltaEl.textContent = '';
-        }, 80);
+        }, LAYOUT_STABILIZATION_DELAY);
     }
 
     // ─── Position helpers ────────────────────────────────────────────────────
