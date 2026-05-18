@@ -1,7 +1,7 @@
 import { StatisticsEngine } from './StatisticsEngine.js';
 import { StatisticsView }   from './StatisticsView.js';
 
-export function StatisticsTool() {
+export function createStatisticsTool() {
     const engine = new StatisticsEngine();
     const view   = new StatisticsView(engine);
     return {

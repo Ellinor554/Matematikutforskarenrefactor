@@ -630,7 +630,9 @@ export class GeometryView {
             redraw();
         });
         uiRow.appendChild(uiDeg);
-        uiRow.innerHTML += '<span>°</span>';
+        const degSpan = document.createElement('span');
+        degSpan.textContent = '°';
+        uiRow.appendChild(degSpan);
         card.appendChild(uiRow);
 
         this.#placeRandom(card);

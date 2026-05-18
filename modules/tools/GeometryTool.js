@@ -1,7 +1,7 @@
 import { GeometryEngine } from './GeometryEngine.js';
 import { GeometryView }   from './GeometryView.js';
 
-export function GeometryTool() {
+export function createGeometryTool() {
     const engine = new GeometryEngine();
     const view   = new GeometryView(engine);
     return {

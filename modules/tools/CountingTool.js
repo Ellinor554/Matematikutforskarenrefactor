@@ -1,7 +1,7 @@
 import { CountingEngine } from './CountingEngine.js';
 import { CountingView }   from './CountingView.js';
 
-export function CountingTool() {
+export function createCountingTool() {
     const engine = new CountingEngine();
     const view   = new CountingView(engine);
     return {
