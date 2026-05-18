@@ -35,7 +35,7 @@ export class ToolRegistry {
             this.#currentRoot.remove();
             this.#currentRoot = null;
         }
-        this.#controlsArea.innerHTML = '';
+        this.#controlsArea.replaceChildren();
 
         if (id === 'home') {
             this.#backBtn.classList.add('hidden');
@@ -43,12 +43,7 @@ export class ToolRegistry {
         } else {
             this.#backBtn.classList.remove('hidden');
             this.#titleEl.innerHTML = tool.title;
-            // Add fullscreen button
-            this.#controlsArea.innerHTML = `
-                <button id="fs-btn" onclick="document.documentElement.requestFullscreen&&document.documentElement.requestFullscreen()" 
-                    class="flex items-center gap-2 px-4 py-2 bg-soft-blue text-white font-bold rounded-xl text-sm hover:opacity-90 transition-opacity shadow-sm">
-                    <i class="fas fa-expand"></i> Helskärm
-                </button>`;
+            this.#controlsArea.appendChild(this.#buildFullscreenButton());
         }
 
         const root = tool.mount(this.#mountPoint);
@@ -61,5 +56,18 @@ export class ToolRegistry {
     #hideTool(id) {
         const tool = this.#tools.get(id);
         if (tool?.onLeave) tool.onLeave();
+    }
+
+    #buildFullscreenButton() {
+        const btn = document.createElement('button');
+        btn.id = 'fs-btn';
+        btn.className = 'flex items-center gap-2 px-4 py-2 bg-soft-blue text-white font-bold rounded-xl text-sm hover:opacity-90 transition-opacity shadow-sm';
+        btn.innerHTML = '<i class="fas fa-expand"></i> Helskärm';
+        btn.addEventListener('click', () => {
+            if (document.documentElement.requestFullscreen) {
+                document.documentElement.requestFullscreen();
+            }
+        });
+        return btn;
     }
 }

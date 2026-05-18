@@ -6,7 +6,9 @@ export class EventBus {
         return () => this.#listeners.get(event)?.delete(handler);
     }
     emit(event, data) {
-        this.#listeners.get(event)?.forEach(h => h(data));
+        this.#listeners.get(event)?.forEach(h => {
+            try { h(data); } catch (err) { console.error(`EventBus handler error on "${event}":`, err); }
+        });
     }
 }
 export const bus = new EventBus();
