@@ -731,13 +731,25 @@ export class GeometryView {
         const row = (label, value) => {
             const d = document.createElement('div');
             d.className = 'calcGeo_row';
-            d.innerHTML = `<span class="calcGeo_lbl">${label}:</span> <span class="calcGeo_val">${fmtN(value)} ${unit}${label.includes('V') ? '³' : label.includes('A') ? '²' : ''}</span>`;
+            const lbl = document.createElement('span');
+            lbl.className = 'calcGeo_lbl';
+            lbl.textContent = `${label}:`;
+            const val = document.createElement('span');
+            val.className = 'calcGeo_val';
+            const suffix = label.includes('V') ? '³' : label.includes('A') ? '²' : '';
+            val.textContent = `${fmtN(value)} ${unit}${suffix}`;
+            d.appendChild(lbl);
+            d.append(' ');
+            d.appendChild(val);
             return d;
         };
         const inputRow = (dimKey, label) => {
-            const d = document.createElement('div');
+            const d   = document.createElement('div');
             d.className = 'calcGeo_inprow';
-            d.innerHTML = `<label class="calcGeo_dimLbl">${label}:</label>`;
+            const lbl = document.createElement('label');
+            lbl.className   = 'calcGeo_dimLbl';
+            lbl.textContent = `${label}:`;
+            d.appendChild(lbl);
             const inp = document.createElement('input');
             inp.type  = 'number'; inp.step = '0.1'; inp.min = '0.1';
             inp.className = 'calcGeo_inp';
@@ -923,7 +935,14 @@ export class GeometryView {
             cube:'Kub',cuboid:'Rätblock',sphere:'Klot',
             pyramid:'Pyramid',cylinder:'Cylinder',cone:'Kon',
         };
-        content.innerHTML = `<strong>${typeNames[type]||type}</strong><br>` +
-            Object.entries(dims).map(([k,v]) => `${k} = ${v} ${unit}`).join('<br>');
+        content.textContent = '';
+        const strong = document.createElement('strong');
+        strong.textContent = typeNames[type] || type;
+        content.appendChild(strong);
+        Object.entries(dims).forEach(([k, v]) => {
+            const line = document.createElement('div');
+            line.textContent = `${k} = ${v} ${unit}`;
+            content.appendChild(line);
+        });
     }
 }

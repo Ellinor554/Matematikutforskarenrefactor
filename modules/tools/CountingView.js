@@ -183,6 +183,8 @@ export class CountingView {
     }
 
     #removeBalls() {
+        this.#balls.forEach(b => b.remove());
+        // also sweep any strays from prior instances
         document.querySelectorAll('.ten-friend-item').forEach(b => b.remove());
         this.#balls = [];
         this.#zone1Count = 0;
