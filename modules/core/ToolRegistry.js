@@ -47,6 +47,8 @@ export class ToolRegistry {
         }
 
         const root = tool.mount(this.#mountPoint);
+        // view-section CSS rule requires the `active` class to set display:flex
+        if (root) root.classList.add('active');
         this.#currentRoot = root;
         this.#currentTool = tool;
 
