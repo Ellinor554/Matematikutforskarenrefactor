@@ -1,6 +1,6 @@
 import { bus } from './EventBus.js';
 export class AppState {
-    #activeTool = 'home';
+    #activeTool = null;
     getActiveTool() { return this.#activeTool; }
     setActiveTool(id) {
         const prev = this.#activeTool;
