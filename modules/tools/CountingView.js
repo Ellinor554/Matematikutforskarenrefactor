@@ -1,348 +1,336 @@
-const BALL_COLORS = [
-    '#5b80a5','#a85c72','#4f7c75','#dec894','#938db3',
-    '#d58b99','#8bb39c','#8db1d1','#e6a95a','#7ec8a0',
+// ═══════════════════════════════════════════════════════════════════════════
+// modules/tools/CountingView.js
+// View for the Räkning tool: tiokompisar (drag balls) + math grid.
+// ═══════════════════════════════════════════════════════════════════════════
+
+import { CountingEngine, COUNTING_CONSTANTS } from './CountingEngine.js';
+
+const { NUM_BALLS } = COUNTING_CONSTANTS;
+const ZONE1_COLOR = '#a85c72';
+const ZONE2_COLOR = '#5b80a5';
+
+const MODE_BUTTONS = [
+    { mode: 'friends',        label: 'Tiokompisar' },
+    { mode: 'multiplication', label: 'Multiplikationskvadrat' },
+    { mode: 'division',       label: 'Divisionskvadrat' },
 ];
 
 export class CountingView {
     #engine;
+    #unsubscribe;
     #root;
-    #friendsView;
-    #gridView;
-    #balls       = [];
-    #unsub;
+    #els = {};
+    #pinnedTd = null;
+    #pinnedEqHTML = '';
+    #lastBuiltGridMode = null;
 
-    // friends state
-    #zone1Count  = 0;
-    #zone2Count  = 0;
-    #zone1El;
-    #zone2El;
-    #countDisplay;
-
-    // grid state
-    #gridMode       = 'multiplication'; // 'multiplication' or 'division'
-    #gridFactor1    = 0;
-    #gridFactor2    = 0;
-    #eqDisplay;
-    #gridTable;
-
-    constructor(engine) {
+    constructor(engine = new CountingEngine()) {
         this.#engine = engine;
     }
 
-    mount(parentEl) {
-        this.#root = this.#buildDOM();
-        parentEl.appendChild(this.#root);
-        this.#unsub = this.#engine.subscribe(() => this.#onModeChange());
-        this.#initFriends();
+    get engine() { return this.#engine; }
+
+    mount(parent) {
+        this.#root = document.createElement('section');
+        this.#root.id = 'view-counting';
+        this.#root.className = 'flex-col h-full bg-soft-surface';
+        this.#root.innerHTML = this.#template();
+        parent.appendChild(this.#root);
+
+        this.#cacheRefs();
+        this.#wireEvents();
+
+        this.#unsubscribe = this.#engine.subscribe(reading => this.#render(reading));
+
         return this.#root;
     }
 
-    cleanup() {
-        this.#removeBalls();
-        if (this.#unsub) this.#unsub();
+    onEnter() {}
+    onLeave() {}
+    destroy() { this.#unsubscribe?.(); this.#root?.remove(); }
+
+    #template() {
+        return `
+        <div class="flex justify-center gap-4 p-4 bg-soft-bg border-b border-soft-border shrink-0 flex-wrap">
+            ${MODE_BUTTONS.map(b => `
+                <button data-mode="${b.mode}"
+                        class="px-4 py-2 bg-soft-yellow/40 text-soft-text font-bold
+                               rounded-full hover:bg-soft-yellow/70">${b.label}</button>
+            `).join('')}
+        </div>
+
+        <div class="flex-1 relative overflow-auto p-4 flex items-center justify-center">
+
+            <div data-role="friends-view" class="w-full max-w-4xl h-full flex flex-col items-center">
+                <h3 class="text-2xl font-bold text-soft-text mb-6">Gruppera tiokompisarna</h3>
+                <div class="flex w-full gap-8 h-64 mb-8">
+                    <div data-zone="1"
+                         class="flex-1 border-4 border-dashed border-soft-pinkLight rounded-3xl
+                                bg-soft-pinkLight/10 flex flex-wrap content-start p-4 gap-2 relative"></div>
+                    <div class="flex items-center text-5xl font-bold text-soft-border">+</div>
+                    <div data-zone="2"
+                         class="flex-1 border-4 border-dashed border-soft-blueLight rounded-3xl
+                                bg-soft-blueLight/10 flex flex-wrap content-start p-4 gap-2 relative"></div>
+                </div>
+                <div class="text-4xl font-bold text-soft-text bg-white shadow-lg px-8 py-4
+                            rounded-full border border-soft-border">
+                    <span data-role="count-1" class="text-soft-pink">5</span> +
+                    <span data-role="count-2" class="text-soft-blue">5</span> = 10
+                </div>
+            </div>
+
+            <div data-role="grid-view" class="hidden flex-col items-center pb-10">
+                <div data-role="grid-equation"
+                     class="h-16 flex items-center justify-center text-2xl md:text-3xl
+                            font-bold text-soft-purple mb-4 bg-soft-purpleLight/20 px-8 rounded-full">
+                    För musen över eller tryck på rutorna
+                </div>
+                <div data-role="grid-table"
+                     class="bg-white p-4 shadow-lg rounded-xl border border-soft-border overflow-x-auto"></div>
+            </div>
+
+        </div>`;
     }
 
-    // ── DOM construction ──────────────────────────────────────────────────────
-    #buildDOM() {
-        const section = document.createElement('section');
-        section.className = 'tool-view flex flex-col h-full';
+    #cacheRefs() {
+        const $ = sel => this.#root.querySelector(sel);
+        const $$ = sel => this.#root.querySelectorAll(sel);
+        this.#els = {
+            modeButtons:  $$('[data-mode]'),
+            friendsView:  $('[data-role="friends-view"]'),
+            zone1:        this.#root.querySelector('[data-zone="1"]'),
+            zone2:        this.#root.querySelector('[data-zone="2"]'),
+            count1:       $('[data-role="count-1"]'),
+            count2:       $('[data-role="count-2"]'),
+            gridView:     $('[data-role="grid-view"]'),
+            gridEquation: $('[data-role="grid-equation"]'),
+            gridTable:    $('[data-role="grid-table"]'),
+        };
+    }
 
-        // topbar
-        const topbar = document.createElement('div');
-        topbar.className = 'flex flex-row gap-2 p-2 bg-gray-50 border-b flex-shrink-0 items-center';
-
-        const modes = [
-            ['friends',       'Tio-kompisar'],
-            ['multiplication','Multiplikation'],
-            ['division',      'Division'],
-        ];
-        modes.forEach(([mode, label]) => {
-            const btn = document.createElement('button');
-            btn.className = 'geo-btn';
-            btn.textContent = label;
-            btn.addEventListener('click', () => {
-                this.#engine.setMode(mode);
-            });
-            topbar.appendChild(btn);
+    #wireEvents() {
+        this.#root.addEventListener('click', evt => {
+            const modeBtn = evt.target.closest('[data-mode]');
+            if (modeBtn) this.#engine.setMode(modeBtn.dataset.mode);
         });
-
-        section.appendChild(topbar);
-
-        // ── friends view ──────────────────────────────────────────────────────
-        this.#friendsView = document.createElement('div');
-        this.#friendsView.className = 'flex flex-col flex-1 overflow-auto p-4 gap-4';
-
-        const title = document.createElement('h2');
-        title.className = 'text-lg font-bold text-center';
-        title.textContent = 'Tio-kompisar – dra bollarna till zonerna';
-        this.#friendsView.appendChild(title);
-
-        const zonesRow = document.createElement('div');
-        zonesRow.className = 'flex flex-row gap-6 justify-center flex-wrap';
-
-        this.#zone1El = this.#makeZone('Zon 1 (rosa)', '#a85c72');
-        this.#zone2El = this.#makeZone('Zon 2 (blå)',  '#5b80a5');
-        zonesRow.appendChild(this.#zone1El);
-        zonesRow.appendChild(this.#zone2El);
-        this.#friendsView.appendChild(zonesRow);
-
-        const launchRow = document.createElement('div');
-        launchRow.className = 'flex justify-center';
-        const launchBtn = document.createElement('button');
-        launchBtn.className = 'geo-btn';
-        launchBtn.textContent = '▶ Starta bollar';
-        launchBtn.addEventListener('click', () => {
-            this.#removeBalls();
-            setTimeout(() => this.#spawnBalls(), 50);
-        });
-        launchRow.appendChild(launchBtn);
-        this.#friendsView.appendChild(launchRow);
-
-        this.#countDisplay = document.createElement('div');
-        this.#countDisplay.className = 'text-center text-xl font-bold py-2';
-        this.#countDisplay.textContent = '';
-        this.#friendsView.appendChild(this.#countDisplay);
-
-        section.appendChild(this.#friendsView);
-
-        // ── grid view ─────────────────────────────────────────────────────────
-        this.#gridView = document.createElement('div');
-        this.#gridView.className = 'flex flex-col flex-1 overflow-auto p-4 gap-3';
-        this.#gridView.style.display = 'none';
-
-        this.#eqDisplay = document.createElement('div');
-        this.#eqDisplay.className = 'text-center text-2xl font-bold py-2';
-        this.#gridView.appendChild(this.#eqDisplay);
-
-        this.#gridTable = document.createElement('div');
-        this.#gridTable.className = 'overflow-auto';
-        this.#gridView.appendChild(this.#gridTable);
-
-        section.appendChild(this.#gridView);
-
-        return section;
     }
 
-    #makeZone(label, color) {
-        const zone = document.createElement('div');
-        zone.className = 'drop-zone';
-        zone.style.cssText = `min-width:180px;min-height:160px;border:3px dashed ${color};border-radius:12px;padding:12px;position:relative;display:flex;flex-direction:column;align-items:center;gap:4px;`;
-
-        const lbl = document.createElement('div');
-        lbl.className = 'text-sm font-semibold mb-2';
-        lbl.style.color = color;
-        lbl.textContent = label;
-        zone.appendChild(lbl);
-        return zone;
-    }
-
-    // ── mode switch ───────────────────────────────────────────────────────────
-    #onModeChange() {
-        const mode = this.#engine.getMode();
-        this.#removeBalls();
-
-        if (mode === 'friends') {
-            this.#friendsView.style.display = '';
-            this.#gridView.style.display    = 'none';
-            setTimeout(() => this.#spawnBalls(), 50);
+    #render(reading) {
+        if (reading.isFriends) {
+            this.#showFriends();
+            this.#renderFriends(reading);
         } else {
-            this.#friendsView.style.display = 'none';
-            this.#gridView.style.display    = '';
-            this.#gridMode = mode;
-            this.#buildGrid();
+            this.#showGrid();
+            this.#renderGrid(reading);
         }
     }
 
-    #initFriends() {
-        setTimeout(() => this.#spawnBalls(), 150);
+    #showFriends() {
+        this.#els.friendsView.classList.remove('hidden');
+        this.#els.friendsView.classList.add('flex');
+        this.#els.gridView.classList.add('hidden');
+        this.#els.gridView.classList.remove('flex');
     }
 
-    // ── ten-friends balls ─────────────────────────────────────────────────────
-    #spawnBalls() {
-        const launchBtn = this.#friendsView.querySelector('button');
-        const rect      = launchBtn ? launchBtn.getBoundingClientRect() : { left:100, top:200 };
+    #showGrid() {
+        this.#els.gridView.classList.remove('hidden');
+        this.#els.gridView.classList.add('flex');
+        this.#els.friendsView.classList.add('hidden');
+        this.#els.friendsView.classList.remove('flex');
+    }
 
-        for (let i = 0; i < 10; i++) {
+    #renderFriends(reading) {
+        if (this.#els.zone1.querySelectorAll('[data-ball-index]').length +
+            this.#els.zone2.querySelectorAll('[data-ball-index]').length !== NUM_BALLS) {
+            this.#buildBalls();
+        }
+
+        for (let i = 0; i < NUM_BALLS; i++) {
+            const ball = this.#root.querySelector(`[data-ball-index="${i}"]`);
+            if (!ball) continue;
+            const targetZone = reading.ballZones[i];
+            const currentZone = ball.parentElement.dataset.zone;
+            if (currentZone !== String(targetZone)) {
+                const target = targetZone === 1 ? this.#els.zone1 : this.#els.zone2;
+                target.appendChild(ball);
+            }
+            ball.style.backgroundColor = targetZone === 1 ? ZONE1_COLOR : ZONE2_COLOR;
+        }
+
+        this.#els.count1.textContent = reading.zone1Count;
+        this.#els.count2.textContent = reading.zone2Count;
+    }
+
+    #buildBalls() {
+        this.#els.zone1.querySelectorAll('[data-ball-index]').forEach(b => b.remove());
+        this.#els.zone2.querySelectorAll('[data-ball-index]').forEach(b => b.remove());
+
+        for (let i = 0; i < NUM_BALLS; i++) {
             const ball = document.createElement('div');
-            ball.className = 'w-12 h-12 rounded-full shadow-md cursor-grab border-2 border-white draggable-item ten-friend-item';
-            ball.style.cssText = `position:absolute;background:${BALL_COLORS[i % BALL_COLORS.length]};z-index:1000;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:bold;font-size:1.1em;user-select:none;`;
-            ball.textContent = i + 1;
-
-            const bx = rect.left + 20 + i * 55;
-            const by = rect.top  + 20;
-            ball.dataset.x = bx;
-            ball.dataset.y = by;
-            ball.style.left = bx + 'px';
-            ball.style.top  = by + 'px';
-
-            document.body.appendChild(ball);
-            this.#balls.push(ball);
-            this.#makeBallDraggable(ball);
+            ball.dataset.ballIndex = i;
+            ball.className = 'w-12 h-12 rounded-full shadow-md cursor-grab active:cursor-grabbing border-2 border-white';
+            ball.style.touchAction = 'none';
+            ball.style.userSelect  = 'none';
+            this.#wireBallDrag(ball, i);
+            this.#els.zone1.appendChild(ball);
         }
-        this.#updateZoneCounts();
     }
 
-    #removeBalls() {
-        this.#balls.forEach(b => b.remove());
-        this.#balls = [];
-        this.#zone1Count = 0;
-        this.#zone2Count = 0;
-        if (this.#countDisplay) this.#countDisplay.textContent = '';
-    }
+    #wireBallDrag(ball, ballIndex) {
+        let dragging = false;
+        let startX = 0, startY = 0;
+        let originalParent = null;
+        let originalRect = null;
 
-    #makeBallDraggable(ball) {
-        let sx, sy, ix, iy;
         ball.addEventListener('pointerdown', e => {
-            if (e.button !== 0) return;
-            sx = e.clientX; sy = e.clientY;
-            ix = parseFloat(ball.dataset.x) || 0;
-            iy = parseFloat(ball.dataset.y) || 0;
+            dragging = true;
+            startX = e.clientX;
+            startY = e.clientY;
+            originalParent = ball.parentElement;
+            originalRect = ball.getBoundingClientRect();
+
+            ball.style.position = 'fixed';
+            ball.style.left  = originalRect.left + 'px';
+            ball.style.top   = originalRect.top + 'px';
+            ball.style.zIndex = '1000';
+            document.body.appendChild(ball);
+
             ball.setPointerCapture(e.pointerId);
-            ball.style.cursor = 'grabbing';
             e.preventDefault();
         });
-        ball.addEventListener('pointermove', e => {
-            if (!ball.hasPointerCapture(e.pointerId)) return;
-            ball.dataset.x = ix + (e.clientX - sx);
-            ball.dataset.y = iy + (e.clientY - sy);
-            ball.style.left = ball.dataset.x + 'px';
-            ball.style.top  = ball.dataset.y + 'px';
-        });
-        ball.addEventListener('pointerup', e => {
-            if (!ball.hasPointerCapture(e.pointerId)) return;
-            ball.releasePointerCapture(e.pointerId);
-            ball.style.cursor = 'grab';
-            this.#snapToZone(ball);
-            this.#updateZoneCounts();
-        });
-    }
 
-    #snapToZone(ball) {
-        const bx = parseFloat(ball.dataset.x) + 24;
-        const by = parseFloat(ball.dataset.y) + 24;
-        [this.#zone1El, this.#zone2El].forEach(zone => {
-            const r = zone.getBoundingClientRect();
-            if (bx >= r.left && bx <= r.right && by >= r.top && by <= r.bottom) {
-                // snap inside zone
-                const nx = r.left + 10 + Math.random() * (r.width  - 60);
-                const ny = r.top  + 30 + Math.random() * (r.height - 60);
-                ball.dataset.x = nx;
-                ball.dataset.y = ny;
-                ball.style.left = nx + 'px';
-                ball.style.top  = ny + 'px';
+        ball.addEventListener('pointermove', e => {
+            if (!dragging) return;
+            const dx = e.clientX - startX;
+            const dy = e.clientY - startY;
+            ball.style.left = (originalRect.left + dx) + 'px';
+            ball.style.top  = (originalRect.top  + dy) + 'px';
+        });
+
+        ball.addEventListener('pointerup', e => {
+            if (!dragging) return;
+            dragging = false;
+            ball.releasePointerCapture(e.pointerId);
+
+            const r1 = this.#els.zone1.getBoundingClientRect();
+            const r2 = this.#els.zone2.getBoundingClientRect();
+            const ballRect = ball.getBoundingClientRect();
+            const cx = ballRect.left + ballRect.width  / 2;
+            const cy = ballRect.top  + ballRect.height / 2;
+
+            let droppedZone = null;
+            if (cx >= r1.left && cx <= r1.right && cy >= r1.top && cy <= r1.bottom) droppedZone = 1;
+            else if (cx >= r2.left && cx <= r2.right && cy >= r2.top && cy <= r2.bottom) droppedZone = 2;
+
+            ball.style.position = '';
+            ball.style.left = '';
+            ball.style.top  = '';
+            ball.style.zIndex = '';
+
+            if (droppedZone === null) {
+                originalParent.appendChild(ball);
+            } else {
+                this.#engine.setBallZone(ballIndex, droppedZone);
             }
         });
     }
 
-    #updateZoneCounts() {
-        let c1 = 0, c2 = 0;
-        this.#balls.forEach(ball => {
-            const bx = parseFloat(ball.dataset.x) + 24;
-            const by = parseFloat(ball.dataset.y) + 24;
-            const r1 = this.#zone1El.getBoundingClientRect();
-            const r2 = this.#zone2El.getBoundingClientRect();
-            if (bx >= r1.left && bx <= r1.right && by >= r1.top && by <= r1.bottom) c1++;
-            else if (bx >= r2.left && bx <= r2.right && by >= r2.top && by <= r2.bottom) c2++;
-        });
-        this.#zone1Count = c1;
-        this.#zone2Count = c2;
-        const sum = c1 + c2;
-        this.#countDisplay.textContent = sum > 0
-            ? `Zon 1: ${c1}  •  Zon 2: ${c2}  •  Totalt: ${sum}`
-            : '';
-        // ten-friends hint
-        if (c1 + c2 === 10) {
-            this.#countDisplay.textContent += `  →  ${c1} + ${c2} = 10 ✓`;
+    #renderGrid(reading) {
+        if (this.#lastBuiltGridMode !== reading.mode) {
+            this.#buildGridTable(reading.isMultiplication);
+            this.#lastBuiltGridMode = reading.mode;
+            this.#pinnedTd = null;
+            this.#pinnedEqHTML = '';
+            this.#els.gridEquation.innerHTML = 'För musen över eller tryck på rutorna';
         }
     }
 
-    // ── multiplication / division grid ────────────────────────────────────────
-    #buildGrid() {
-        this.#gridTable.innerHTML = '';
-        this.#gridFactor1 = 0;
-        this.#gridFactor2 = 0;
-        this.#updateEqDisplay();
+    #buildGridTable(isMultiplication) {
+        const container = this.#els.gridTable;
+        container.innerHTML = '';
 
+        const cells = CountingEngine.gridCells(isMultiplication);
         const table = document.createElement('table');
         table.className = 'border-collapse';
 
-        for (let row = 0; row <= 10; row++) {
+        cells.forEach((rowCells, i) => {
             const tr = document.createElement('tr');
-            for (let col = 0; col <= 10; col++) {
-                const td = document.createElement('td');
-                td.className = 'math-grid-cell border border-gray-300 text-center cursor-pointer select-none';
-                td.style.cssText = 'width:36px;height:36px;font-size:0.85em;';
+            rowCells.forEach((c, j) => {
+                const isHeader = c.kind === 'corner' || c.kind === 'header';
+                const td = document.createElement(isHeader ? 'th' : 'td');
+                td.className =
+                    'w-12 h-12 text-center border border-soft-border math-grid-cell cursor-pointer ' +
+                    (isHeader ? 'bg-soft-bg text-soft-muted font-bold' : 'text-soft-text');
+                td.textContent = c.text;
 
-                const isHeader = row === 0 || col === 0;
-                if (isHeader) {
-                    const val = row === 0 ? col : row;
-                    td.textContent = val === 0 ? '×' : val;
-                    td.style.background = '#dbeafe';
-                    td.style.fontWeight = 'bold';
-                } else {
-                    td.textContent = row * col;
+                if (c.kind === 'cell') {
+                    this.#wireCellHighlight(td, tr, table, c.equationHTML, j);
                 }
-
-                td.dataset.row = row;
-                td.dataset.col = col;
-
-                td.addEventListener('mouseenter', () => this.#hoverCell(td));
-                td.addEventListener('mouseleave', () => this.#unhoverCell());
-                td.addEventListener('click',      () => this.#clickCell(td));
-                td.addEventListener('touchstart',  e => { e.preventDefault(); this.#clickCell(td); }, {passive:false});
-
                 tr.appendChild(td);
-            }
+            });
             table.appendChild(tr);
-        }
-        this.#gridTable.appendChild(table);
-    }
-
-    #hoverCell(td) {
-        const r = parseInt(td.dataset.row);
-        const c = parseInt(td.dataset.col);
-        if (r === 0 || c === 0) return;
-        this.#gridTable.querySelectorAll('td').forEach(cell => {
-            const cr = parseInt(cell.dataset.row);
-            const cc = parseInt(cell.dataset.col);
-            if (cr === r || cc === c) cell.classList.add('highlight-row-col');
         });
+
+        let touchHoverTd = null;
+        const tdAt = (x, y) => {
+            const el = document.elementFromPoint(x, y);
+            return el ? (el.tagName === 'TD' ? el : el.closest?.('td')) : null;
+        };
+        const setTouchHover = td => {
+            if (td === touchHoverTd) return;
+            if (touchHoverTd?.onmouseleave) touchHoverTd.onmouseleave();
+            touchHoverTd = td;
+            if (td?.onmouseenter) td.onmouseenter();
+        };
+        table.addEventListener('touchstart', e => {
+            if (!e.touches.length) return;
+            setTouchHover(tdAt(e.touches[0].clientX, e.touches[0].clientY));
+        }, { passive: true });
+        table.addEventListener('touchmove', e => {
+            if (!e.touches.length) return;
+            setTouchHover(tdAt(e.touches[0].clientX, e.touches[0].clientY));
+        }, { passive: true });
+        table.addEventListener('touchend', () => { touchHoverTd = null; }, { passive: true });
+        table.addEventListener('touchcancel', () => {
+            if (touchHoverTd?.onmouseleave) touchHoverTd.onmouseleave();
+            touchHoverTd = null;
+        }, { passive: true });
+
+        container.appendChild(table);
     }
 
-    #unhoverCell() {
-        this.#gridTable.querySelectorAll('.highlight-row-col').forEach(c => c.classList.remove('highlight-row-col'));
-    }
+    #wireCellHighlight(td, tr, table, eqHTML, colIndex) {
+        const highlightRowCol = on => {
+            const fn = on ? 'add' : 'remove';
+            Array.from(table.rows).forEach(r => {
+                if (r.cells[colIndex]) r.cells[colIndex].classList[fn]('highlight-row-col');
+            });
+            Array.from(tr.cells).forEach(c => c.classList[fn]('highlight-row-col'));
+        };
 
-    #clickCell(td) {
-        const r = parseInt(td.dataset.row);
-        const c = parseInt(td.dataset.col);
-        if (r === 0 || c === 0) return;
-        this.#gridFactor1 = r;
-        this.#gridFactor2 = c;
-        this.#updateEqDisplay();
-        this.#unhoverCell();
-        this.#gridTable.querySelectorAll('td').forEach(cell => {
-            const cr = parseInt(cell.dataset.row);
-            const cc = parseInt(cell.dataset.col);
-            if (cr === r || cc === c) cell.classList.add('highlight-row-col');
-        });
-    }
-
-    #updateEqDisplay() {
-        const a = this.#gridFactor1;
-        const b = this.#gridFactor2;
-        if (!a || !b) {
-            this.#eqDisplay.textContent = this.#gridMode === 'multiplication'
-                ? 'Klicka i tabellen för att räkna'
-                : 'Klicka i tabellen för att räkna';
-            return;
-        }
-        if (this.#gridMode === 'multiplication') {
-            this.#eqDisplay.textContent = `${a} × ${b} = ${a*b}`;
-        } else {
-            this.#eqDisplay.textContent = b !== 0
-                ? `${a*b} ÷ ${b} = ${a}`
-                : '';
-        }
+        td.onmouseenter = () => {
+            highlightRowCol(true);
+            this.#els.gridEquation.innerHTML = eqHTML;
+        };
+        td.onmouseleave = () => {
+            if (this.#pinnedTd !== td) {
+                highlightRowCol(false);
+                this.#els.gridEquation.innerHTML =
+                    this.#pinnedTd ? this.#pinnedEqHTML : 'För musen över eller tryck på rutorna';
+            }
+        };
+        td.onclick = () => {
+            table.querySelectorAll('.highlight-row-col').forEach(el =>
+                el.classList.remove('highlight-row-col'));
+            if (this.#pinnedTd === td) {
+                this.#pinnedTd = null;
+                this.#pinnedEqHTML = '';
+            } else {
+                this.#pinnedTd = td;
+                this.#pinnedEqHTML = eqHTML;
+            }
+            highlightRowCol(true);
+            this.#els.gridEquation.innerHTML = eqHTML;
+        };
     }
 }
