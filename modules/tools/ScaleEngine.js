@@ -1,10 +1,6 @@
 // ═══════════════════════════════════════════════════════════════════════════
 // modules/tools/ScaleEngine.js
-//
-// Pure domain model for the Skala och mått tool. Holds the active object,
-// its real-world dimensions in cm, the current scale ratio (num:den),
-// the proportion lock, and the hover state used to flash the original.
-// Knows nothing about canvas drawing.
+// Pure domain model for the Skala och mått tool.
 // ═══════════════════════════════════════════════════════════════════════════
 
 const ROUND = 1000;
@@ -36,7 +32,9 @@ export class ScaleEngine {
     #hovering = false;
     #listeners = new Set();
 
-    constructor() { this.setObject(DEFAULT_OBJECT_KEY); }
+    constructor() {
+        this.setObject(DEFAULT_OBJECT_KEY);
+    }
 
     setObject(key) {
         const def = SCALE_OBJECTS[key];
@@ -55,7 +53,95 @@ export class ScaleEngine {
         this.#emit();
     }
 
-    setLockProportion(locked) { this.#lockProp = !!locked; this.#emit(); }
+    setLockProportion(locked) {
+        this.#lockProp = !!locked;
+        this.#emit();
+    }
 
     setWidthCm(newWCm) {
         if (!Number.isFinite(newWCm) || newWCm <= 0) return;
+        if (this.#lockProp && this.#objWCm > 0) {
+            const r = newWCm / this.#objWCm;
+            this.#objHCm = roundTo3(this.#objHCm * r);
+        }
+        this.#objWCm = newWCm;
+        this.#emit();
+    }
+
+    setHeightCm(newHCm) {
+        if (!Number.isFinite(newHCm) || newHCm <= 0) return;
+        if (this.#lockProp && this.#objHCm > 0) {
+            const r = newHCm / this.#objHCm;
+            this.#objWCm = roundTo3(this.#objWCm * r);
+        }
+        this.#objHCm = newHCm;
+        this.#emit();
+    }
+
+    setHovering(isHovering) {
+        const v = !!isHovering;
+        if (v === this.#hovering) return;
+        this.#hovering = v;
+        this.#emit();
+    }
+
+    getReading() {
+        const factor = this.#numerator / this.#denominator;
+        const def = SCALE_OBJECTS[this.#activeObject] || SCALE_OBJECTS.gem;
+        const drawingWCm = this.#objWCm * factor;
+        const drawingHCm = this.#objHCm * factor;
+        const ratioKind =
+              this.#numerator < this.#denominator ? 'reduction'
+            : this.#numerator > this.#denominator ? 'enlargement'
+            : 'original';
+
+        return Object.freeze({
+            activeObject: this.#activeObject,
+            objectLabel:  def.label,
+            objectType:   def.type,
+            realWCm:      this.#objWCm,
+            realHCm:      this.#objHCm,
+            drawingWCm,
+            drawingHCm,
+            numerator:    this.#numerator,
+            denominator:  this.#denominator,
+            factor,
+            ratioKind,
+            ratioLabel:   `${this.#numerator}:${this.#denominator}`,
+            ratioTypeText:
+                  ratioKind === 'reduction'   ? '(Förminskning)'
+                : ratioKind === 'enlargement' ? '(Förstoring)'
+                :                                '(Original)',
+            lockProp:  this.#lockProp,
+            hovering:  this.#hovering,
+        });
+    }
+
+    subscribe(listener) {
+        this.#listeners.add(listener);
+        listener(this.getReading());
+        return () => this.#listeners.delete(listener);
+    }
+
+    #emit() {
+        const reading = this.getReading();
+        for (const l of this.#listeners) {
+            try { l(reading); }
+            catch (err) { console.error('[ScaleEngine] listener threw:', err); }
+        }
+    }
+}
+
+function roundTo3(v) {
+    return Math.round(v * ROUND) / ROUND;
+}
+
+export function fmtCmVal(cm) {
+    const r = roundTo3(cm);
+    if (r % 1 === 0) return String(r);
+    return r.toFixed(3).replace('.', ',');
+}
+
+export function fmtCm(cm) {
+    return `${fmtCmVal(cm)} cm`;
+}
