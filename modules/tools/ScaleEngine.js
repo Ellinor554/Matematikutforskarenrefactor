@@ -1,101 +1,61 @@
-const SCALE_CELL_PX = 40;
-const SCALE_ROUND = 1000;
+// ═══════════════════════════════════════════════════════════════════════════
+// modules/tools/ScaleEngine.js
+//
+// Pure domain model for the Skala och mått tool. Holds the active object,
+// its real-world dimensions in cm, the current scale ratio (num:den),
+// the proportion lock, and the hover state used to flash the original.
+// Knows nothing about canvas drawing.
+// ═══════════════════════════════════════════════════════════════════════════
 
-export const SCALE_OBJECTS = [
-    { key: 'skruv',       label: 'Skruv',        wCm: 0.5, hCm: 4   },
-    { key: 'insekt',      label: 'Insekt',        wCm: 1.4, hCm: 2   },
-    { key: 'gem',         label: 'Gem',           wCm: 0.8, hCm: 3   },
-    { key: 'blyertspenna',label: 'Blyertspenna',  wCm: 0.6, hCm: 7   },
-    { key: 'rektangel',   label: 'Rektangel',     wCm: 4,   hCm: 2.5 },
-    { key: 'kvadrat',     label: 'Kvadrat',       wCm: 3,   hCm: 3   },
-];
+const ROUND = 1000;
 
-function fmtCm(cm) {
-    const r = Math.round(cm * SCALE_ROUND) / SCALE_ROUND;
-    if (Number.isInteger(r)) return r + ' cm';
-    return r.toString().replace('.', ',') + ' cm';
-}
+export const SCALE_OBJECTS = Object.freeze({
+    skruv:        { label: 'Skruv',        w: 0.5, h: 4.0, type: 'skruv' },
+    insekt:       { label: 'Insekt',       w: 1.4, h: 2.0, type: 'insekt' },
+    gem:          { label: 'Gem',          w: 0.8, h: 3.0, type: 'gem' },
+    blyertspenna: { label: 'Blyertspenna', w: 0.6, h: 7.0, type: 'blyertspenna' },
+    rektangel:    { label: 'Rektangel',    w: 4.0, h: 2.5, type: 'rektangel' },
+    kvadrat:      { label: 'Kvadrat',      w: 3.0, h: 3.0, type: 'kvadrat' },
+});
+
+export const SCALE_RATIOS = Object.freeze({
+    reductions: [{ n: 1, d: 100 }, { n: 1, d: 10 }, { n: 1, d: 5 }, { n: 1, d: 2 }],
+    original:    { n: 1, d: 1 },
+    enlargements: [{ n: 2, d: 1 }, { n: 5, d: 1 }, { n: 10, d: 1 }],
+});
+
+const DEFAULT_OBJECT_KEY = 'gem';
 
 export class ScaleEngine {
+    #activeObject;
+    #objWCm;
+    #objHCm;
+    #lockProp = false;
     #numerator = 1;
-    #denominator = 4;
-    #activeKey = 'gem';
-    #wCm;
-    #hCm;
-    #lockProportions = false;
-    #listeners = [];
+    #denominator = 1;
+    #hovering = false;
+    #listeners = new Set();
 
-    constructor() {
-        const obj = SCALE_OBJECTS.find(o => o.key === this.#activeKey);
-        this.#wCm = obj.wCm;
-        this.#hCm = obj.hCm;
-    }
+    constructor() { this.setObject(DEFAULT_OBJECT_KEY); }
 
-    getScale() { return { numerator: this.#numerator, denominator: this.#denominator }; }
-    getActiveKey() { return this.#activeKey; }
-    getLockProportions() { return this.#lockProportions; }
-    getDimensions() { return { wCm: this.#wCm, hCm: this.#hCm }; }
-
-    getScaledDimensions() {
-        const factor = this.#numerator / this.#denominator;
-        return {
-            wCm: Math.round(this.#wCm * factor * SCALE_ROUND) / SCALE_ROUND,
-            hCm: Math.round(this.#hCm * factor * SCALE_ROUND) / SCALE_ROUND,
-        };
+    setObject(key) {
+        const def = SCALE_OBJECTS[key];
+        if (!def) return;
+        this.#activeObject = key;
+        this.#objWCm = def.w;
+        this.#objHCm = def.h;
+        this.#emit();
     }
 
     setScale(numerator, denominator) {
+        if (!Number.isFinite(numerator) || !Number.isFinite(denominator)) return;
+        if (numerator <= 0 || denominator <= 0) return;
         this.#numerator = numerator;
         this.#denominator = denominator;
-        this.#notify();
+        this.#emit();
     }
 
-    setObject(key) {
-        const obj = SCALE_OBJECTS.find(o => o.key === key);
-        if (!obj) return;
-        this.#activeKey = key;
-        this.#wCm = obj.wCm;
-        this.#hCm = obj.hCm;
-        this.#notify();
-    }
+    setLockProportion(locked) { this.#lockProp = !!locked; this.#emit(); }
 
-    setWidth(wCm) {
-        const orig = SCALE_OBJECTS.find(o => o.key === this.#activeKey);
-        if (this.#lockProportions && orig && orig.wCm > 0) {
-            this.#hCm = Math.round(wCm * (orig.hCm / orig.wCm) * SCALE_ROUND) / SCALE_ROUND;
-        }
-        this.#wCm = wCm;
-        this.#notify();
-    }
-
-    setHeight(hCm) {
-        const orig = SCALE_OBJECTS.find(o => o.key === this.#activeKey);
-        if (this.#lockProportions && orig && orig.hCm > 0) {
-            this.#wCm = Math.round(hCm * (orig.wCm / orig.hCm) * SCALE_ROUND) / SCALE_ROUND;
-        }
-        this.#hCm = hCm;
-        this.#notify();
-    }
-
-    setLockProportions(bool) { this.#lockProportions = bool; this.#notify(); }
-
-    getState() {
-        return {
-            numerator: this.#numerator,
-            denominator: this.#denominator,
-            activeKey: this.#activeKey,
-            wCm: this.#wCm,
-            hCm: this.#hCm,
-            lockProportions: this.#lockProportions,
-            scaled: this.getScaledDimensions(),
-            fmtCm,
-        };
-    }
-
-    subscribe(listener) {
-        this.#listeners.push(listener);
-        return () => { this.#listeners = this.#listeners.filter(l => l !== listener); };
-    }
-
-    #notify() { this.#listeners.forEach(l => l()); }
-}
+    setWidthCm(newWCm) {
+        if (!Number.isFinite(newWCm) || newWCm <= 0) return;
