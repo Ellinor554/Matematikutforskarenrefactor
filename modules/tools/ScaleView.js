@@ -36,7 +36,7 @@ export class ScaleView {
     mount(parent) {
         this.#root = document.createElement('section');
         this.#root.id = 'view-scale';
-        this.#root.className = 'flex-row h-full';
+       this.#root.className = 'view-section flex-row h-full';
         this.#root.innerHTML = this.#template();
         parent.appendChild(this.#root);
 
