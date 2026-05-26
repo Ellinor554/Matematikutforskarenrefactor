@@ -1,209 +1,141 @@
-export const DEC_COL_DEFS = [
-    { pos: 3,  label: 'Tusental',    bg: '#1E88E5', text: '#fff'  },
-    { pos: 2,  label: 'Hundratal',   bg: '#388E3C', text: '#fff'  },
-    { pos: 1,  label: 'Tiotal',      bg: '#F9A825', text: '#222'  },
-    { pos: 0,  label: 'Ental',       bg: '#E53935', text: '#fff'  },
-    { pos: -1, label: 'Tiondelar',   bg: '#8E24AA', text: '#fff'  },
-    { pos: -2, label: 'Hundradedlar',bg: '#00838F', text: '#fff'  },
-    { pos: -3, label: 'Tusendelar',  bg: '#546E7A', text: '#fff'  },
-];
+// ═══════════════════════════════════════════════════════════════════════════
+// modules/tools/DecimaltalEngine.js
+// Stage 1 — pure place-value model: digit positions, shift, headers, value.
+// ═══════════════════════════════════════════════════════════════════════════
+
+export const DEC_COL_DEFS = Object.freeze([
+    { pos: 3,  key: 'tusental',    label: 'Tusental',    abbr: 'T',  color: '#1565C0', bg: 'rgba(30,136,229,0.09)',  border: '#1565C0' },
+    { pos: 2,  key: 'hundratal',   label: 'Hundratal',   abbr: 'H',  color: '#2E7D32', bg: 'rgba(56,142,60,0.09)',   border: '#2E7D32' },
+    { pos: 1,  key: 'tiotal',      label: 'Tiotal',      abbr: 'Ti', color: '#92700A', bg: 'rgba(249,168,37,0.11)',  border: '#92700A' },
+    { pos: 0,  key: 'ental',       label: 'Ental',       abbr: 'E',  color: '#C62828', bg: 'rgba(229,57,53,0.09)',   border: '#C62828' },
+    { pos: -1, key: 'tiondelar',   label: 'Tiondelar',   abbr: '',   color: '#6a1b9a', bg: 'rgba(106,27,154,0.09)', border: '#6a1b9a' },
+    { pos: -2, key: 'hundradelar', label: 'Hundradelar', abbr: '',   color: '#00695c', bg: 'rgba(0,105,92,0.09)',   border: '#00695c' },
+    { pos: -3, key: 'tusendelar',  label: 'Tusendelar',  abbr: '',   color: '#4527a0', bg: 'rgba(69,39,160,0.09)',  border: '#4527a0' },
+]);
+
+const MIN_POS = -3;
+const MAX_POS = 3;
 
 export class DecimaltalEngine {
     #digits = [];
-    #showBlocks = true;
-    #showNumberLine = false;
-    #showColumns = true;
-    #blocksOnes = 0;
-    #blocksTenths = 0;
-    #blocksHundredths = 0;
-    #zoomStart = 0;
-    #zoomEnd = 10;
-    #pinnedPoints = [];
-    #listeners = [];
+    #columnsVisible = true;
+    #listeners = new Set();
 
-    getValue() {
-        return this.#digits.reduce((s, d) => s + d.val * Math.pow(10, d.pos), 0);
-    }
-
-    getDisplayString() {
-        if (this.#digits.length === 0) return '';
-        const sortedPos = [...new Set(this.#digits.map(d => d.pos))].sort((a, b) => b - a);
-        let intPart = '';
-        let fracPart = '';
-        for (const pos of sortedPos) {
-            const d = this.#digits.find(x => x.pos === pos);
-            const v = d ? d.val : 0;
-            if (pos >= 0) intPart = v.toString() + intPart;
-            else fracPart += v.toString();
-        }
-        if (!intPart) intPart = '0';
-        return fracPart ? `${intPart},${fracPart}` : intPart;
-    }
-
-    setValue(str) {
-        this.#digits = this.#parseInput(str);
-        this.#insertPlaceholderZeros();
-        this.#syncBlocksFromDigits();
-        this.#notify();
+    setFromString(str) {
+        this.#digits = parseInput(str);
+        this.#emit();
     }
 
     shift(steps) {
         if (!steps || this.#digits.length === 0) return;
-        this.#digits = this.#digits.map(d => ({ pos: d.pos + steps, val: d.val }));
-        this.#digits = this.#digits.filter(d => d.pos >= -3 && d.pos <= 3);
+        this.#digits = this.#digits.map(d => ({ ...d, pos: d.pos + steps }));
         this.#insertPlaceholderZeros();
-        this.#syncBlocksFromDigits();
-        this.#notify();
+        this.#emit();
     }
-
-    getDigits() { return this.#digits.map(d => ({ ...d })); }
-    getShowBlocks() { return this.#showBlocks; }
-    getShowNumberLine() { return this.#showNumberLine; }
-    getShowColumns() { return this.#showColumns; }
-    getBlocksState() { return { ones: this.#blocksOnes, tenths: this.#blocksTenths, hundredths: this.#blocksHundredths }; }
-    getZoomRange() { return [this.#zoomStart, this.#zoomEnd]; }
-    getPinnedPoints() { return this.#pinnedPoints.map(p => ({ ...p })); }
-
-    toggleBlocks() { this.#showBlocks = !this.#showBlocks; this.#notify(); }
-    toggleNumberLine() { this.#showNumberLine = !this.#showNumberLine; this.#notify(); }
-    toggleColumns() { this.#showColumns = !this.#showColumns; this.#notify(); }
-
-    splitOne() {
-        if (this.#blocksOnes < 1) return;
-        this.#blocksOnes--;
-        this.#blocksTenths += 10;
-        this.#notify();
-    }
-
-    mergeTenths() {
-        if (this.#blocksTenths < 10) return;
-        this.#blocksTenths -= 10;
-        this.#blocksOnes++;
-        this.#notify();
-    }
-
-    splitTenth() {
-        if (this.#blocksTenths < 1) return;
-        this.#blocksTenths--;
-        this.#blocksHundredths += 10;
-        this.#notify();
-    }
-
-    mergeHundredths() {
-        if (this.#blocksHundredths < 10) return;
-        this.#blocksHundredths -= 10;
-        this.#blocksTenths++;
-        this.#notify();
-    }
-
-    zoomOut() {
-        const range = this.#zoomEnd - this.#zoomStart;
-        const ns = this.#zoomStart - range * 4.5;
-        const ne = this.#zoomEnd + range * 4.5;
-        if (ne - ns > 10000) { this.#zoomStart = 0; this.#zoomEnd = 10; }
-        else { this.#zoomStart = ns; this.#zoomEnd = ne; }
-        this.#notify();
-    }
-
-    zoomTo(start, end) {
-        this.#zoomStart = start;
-        this.#zoomEnd = end;
-        this.#notify();
-    }
-
-    pinCurrent() {
-        const val = this.getValue();
-        if (this.#digits.length === 0) return;
-        if (!this.#pinnedPoints.some(p => Math.abs(p.value - val) < 1e-10)) {
-            const label = val.toLocaleString('sv-SE', { maximumFractionDigits: 4 });
-            this.#pinnedPoints.push({ value: val, label });
-            this.#notify();
-        }
-    }
-
-    clearPins() { this.#pinnedPoints = []; this.#notify(); }
 
     reset() {
+        if (this.#digits.length === 0) return;
         this.#digits = [];
-        this.#blocksOnes = 0;
-        this.#blocksTenths = 0;
-        this.#blocksHundredths = 0;
-        this.#zoomStart = 0;
-        this.#zoomEnd = 10;
-        this.#pinnedPoints = [];
-        this.#notify();
+        this.#emit();
     }
 
-    getState() {
-        return {
-            digits: this.#digits.map(d => ({ ...d })),
-            displayString: this.getDisplayString(),
-            value: this.getValue(),
-            showBlocks: this.#showBlocks,
-            showNumberLine: this.#showNumberLine,
-            showColumns: this.#showColumns,
-            blocksOnes: this.#blocksOnes,
-            blocksTenths: this.#blocksTenths,
-            blocksHundredths: this.#blocksHundredths,
-            zoomStart: this.#zoomStart,
-            zoomEnd: this.#zoomEnd,
-            pinnedPoints: this.#pinnedPoints.map(p => ({ ...p })),
-        };
+    setColumnsVisible(visible) {
+        const v = !!visible;
+        if (this.#columnsVisible === v) return;
+        this.#columnsVisible = v;
+        this.#emit();
+    }
+
+    getReading() {
+        const value = this.#digits.reduce(
+            (s, d) => s + d.val * Math.pow(10, d.pos), 0);
+
+        const headerVals = {};
+        for (const col of DEC_COL_DEFS) {
+            const digit = this.#digits.find(d => d.pos === col.pos);
+            if (!digit) { headerVals[col.key] = ''; continue; }
+            const contribution = digit.val * Math.pow(10, col.pos);
+            headerVals[col.key] = fmtSE(contribution, Math.max(0, -col.pos));
+        }
+
+        const outOfRange = this.#digits.some(d => d.pos < MIN_POS || d.pos > MAX_POS);
+
+        return Object.freeze({
+            digits:          Object.freeze(this.#digits.map(d => ({ ...d }))),
+            value,
+            valueText:       this.#digits.length === 0 ? '—' : fmtSE(value),
+            headerVals:      Object.freeze(headerVals),
+            outOfRange,
+            columnsVisible:  this.#columnsVisible,
+            isEmpty:         this.#digits.length === 0,
+        });
     }
 
     subscribe(listener) {
-        this.#listeners.push(listener);
-        return () => { this.#listeners = this.#listeners.filter(l => l !== listener); };
+        this.#listeners.add(listener);
+        listener(this.getReading());
+        return () => this.#listeners.delete(listener);
     }
 
-    #notify() { this.#listeners.forEach(l => l()); }
-
-    #parseInput(str) {
-        str = (str || '').trim().replace(',', '.').replace(/\s/g, '');
-        if (!str) return [];
-        const num = parseFloat(str);
-        if (isNaN(num) || !isFinite(num)) return [];
-        const negative = str.startsWith('-');
-        const absStr = negative ? str.slice(1) : str;
-        const dotIdx = absStr.indexOf('.');
-        const intPart = dotIdx >= 0 ? absStr.slice(0, dotIdx) : absStr;
-        const fracPart = dotIdx >= 0 ? absStr.slice(dotIdx + 1) : '';
-        const result = [];
-        for (let i = 0; i < intPart.length && (intPart.length - 1 - i) <= 3; i++) {
-            const pos = intPart.length - 1 - i;
-            const val = parseInt(intPart[i], 10);
-            if (!isNaN(val)) result.push({ pos, val });
-        }
-        for (let i = 0; i < fracPart.length && i < 3; i++) {
-            const val = parseInt(fracPart[i], 10);
-            if (!isNaN(val)) result.push({ pos: -(i + 1), val });
-        }
-        return result;
-    }
-
-    #syncBlocksFromDigits() {
-        this.#blocksOnes = 0;
-        this.#blocksTenths = 0;
-        this.#blocksHundredths = 0;
-        for (const d of this.#digits) {
-            if (d.pos === 0)  this.#blocksOnes = d.val;
-            if (d.pos === -1) this.#blocksTenths = d.val;
-            if (d.pos === -2) this.#blocksHundredths = d.val;
+    #emit() {
+        const reading = this.getReading();
+        for (const l of this.#listeners) {
+            try { l(reading); }
+            catch (err) { console.error('[DecimaltalEngine] listener threw:', err); }
         }
     }
 
     #insertPlaceholderZeros() {
         if (this.#digits.length === 0) return;
-        const positions = this.#digits.map(d => d.pos);
-        const maxPos = Math.max(...positions);
-        const minPos = Math.min(...positions);
-        if (maxPos < 0 && !positions.includes(0)) {
+        const maxPos = Math.max(...this.#digits.map(d => d.pos));
+        const minPos = Math.min(...this.#digits.map(d => d.pos));
+
+        if (maxPos < 0) {
             this.#digits.push({ pos: 0, val: 0 });
         }
-        for (let p = maxPos - 1; p > minPos; p--) {
-            if (p >= -3 && p <= 3 && !positions.includes(p)) {
-                this.#digits.push({ pos: p, val: 0 });
+        if (minPos < -1) {
+            for (let pos = -1; pos > minPos; pos--) {
+                if (!this.#digits.some(d => d.pos === pos)) {
+                    this.#digits.push({ pos, val: 0 });
+                }
+            }
+        }
+        const newMax = Math.max(...this.#digits.map(d => d.pos));
+        if (newMax > 0) {
+            for (let pos = 0; pos < newMax; pos++) {
+                if (!this.#digits.some(d => d.pos === pos)) {
+                    this.#digits.push({ pos, val: 0 });
+                }
             }
         }
     }
+}
+
+function parseInput(str) {
+    const s = (str ?? '').toString().trim().replace(',', '.').replace(/\s/g, '');
+    const num = parseFloat(s);
+    if (!s || !Number.isFinite(num)) return [];
+
+    const absStr = s.startsWith('-') ? s.slice(1) : s;
+    const [intPart = '0', fracPart = ''] = absStr.split('.');
+    const result = [];
+
+    for (let i = 0; i < intPart.length; i++) {
+        const pos = intPart.length - 1 - i;
+        if (pos > MAX_POS) continue;
+        const val = parseInt(intPart[i], 10);
+        if (!Number.isNaN(val)) result.push({ pos, val });
+    }
+    for (let i = 0; i < fracPart.length && i < 3; i++) {
+        const val = parseInt(fracPart[i], 10);
+        if (!Number.isNaN(val)) result.push({ pos: -(i + 1), val });
+    }
+    return result;
+}
+
+function fmtSE(n, maxFrac = 6) {
+    return n.toLocaleString('sv-SE', {
+        maximumFractionDigits: maxFrac,
+        minimumFractionDigits: 0,
+    });
 }
