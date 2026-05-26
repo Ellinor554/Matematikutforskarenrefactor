@@ -1,223 +1,336 @@
 // ═══════════════════════════════════════════════════════════════════════════
 // modules/tools/CountingView.js
-// View for the Räkning (Counting) tool — three modes:
-//   • Tiokompisar: drag balls between two zones, see the sum stay at 10
-//   • Multiplikationskvadrat: 10×10 grid with hover highlight on row+column
-//   • Divisionskvadrat: same grid but click cells to mark them
+// View for the Räkning tool: tiokompisar (drag balls) + math grid.
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { CountingEngine } from './CountingEngine.js';
+import { CountingEngine, COUNTING_CONSTANTS } from './CountingEngine.js';
+
+const { NUM_BALLS } = COUNTING_CONSTANTS;
+const ZONE1_COLOR = '#a85c72';
+const ZONE2_COLOR = '#5b80a5';
+
+const MODE_BUTTONS = [
+    { mode: 'friends',        label: 'Tiokompisar' },
+    { mode: 'multiplication', label: 'Multiplikationskvadrat' },
+    { mode: 'division',       label: 'Divisionskvadrat' },
+];
 
 export class CountingView {
     #engine;
     #unsubscribe;
     #root;
     #els = {};
-    #lastReading = null;
+    #pinnedTd = null;
+    #pinnedEqHTML = '';
+    #lastBuiltGridMode = null;
 
-    constructor(engine = new CountingEngine()) { this.#engine = engine; }
+    constructor(engine = new CountingEngine()) {
+        this.#engine = engine;
+    }
+
     get engine() { return this.#engine; }
 
     mount(parent) {
         this.#root = document.createElement('section');
         this.#root.id = 'view-counting';
-        this.#root.className = 'view-section flex-row h-full';
+        this.#root.className = 'flex-col h-full bg-soft-surface';
         this.#root.innerHTML = this.#template();
         parent.appendChild(this.#root);
 
         this.#cacheRefs();
         this.#wireEvents();
 
-        this.#unsubscribe = this.#engine.subscribe(reading => {
-            this.#lastReading = reading;
-            this.#render(reading);
-        });
+        this.#unsubscribe = this.#engine.subscribe(reading => this.#render(reading));
 
         return this.#root;
     }
 
     onEnter() {}
     onLeave() {}
-    destroy() {
-        this.#unsubscribe?.();
-        this.#root?.remove();
-    }
+    destroy() { this.#unsubscribe?.(); this.#root?.remove(); }
 
     #template() {
         return `
-        <aside class="w-64 bg-soft-surface shadow-md z-10 p-5 flex flex-col gap-4
-                      overflow-y-auto border-r border-soft-border shrink-0">
-            <h3 class="font-bold text-soft-text text-sm uppercase tracking-wider text-soft-muted">
-                Välj övning
-            </h3>
-            <div class="flex flex-col gap-2">
-                <button data-mode="tiokompisar"
-                        class="counting-mode-btn flex items-center gap-2 px-3 py-2 rounded-xl border font-bold text-sm">
-                    <i class="fas fa-circle text-soft-pink"></i> Tiokompisar
-                </button>
-                <button data-mode="multiplikation"
-                        class="counting-mode-btn flex items-center gap-2 px-3 py-2 rounded-xl border font-bold text-sm">
-                    <i class="fas fa-times text-soft-blue"></i> Multiplikationskvadrat
-                </button>
-                <button data-mode="division"
-                        class="counting-mode-btn flex items-center gap-2 px-3 py-2 rounded-xl border font-bold text-sm">
-                    <i class="fas fa-divide text-soft-green"></i> Divisionskvadrat
-                </button>
-            </div>
-            <div data-role="info-panel"
-                 class="bg-soft-tealLight/15 border border-soft-tealLight/30 rounded-xl p-3 text-sm text-soft-text"></div>
-            <button data-action="reset"
-                    class="bg-soft-text hover:bg-soft-muted text-white p-2 rounded-lg text-sm font-semibold mt-auto">
-                <i class="fas fa-trash mr-1"></i> Återställ
-            </button>
-        </aside>
+        <div class="flex justify-center gap-4 p-4 bg-soft-bg border-b border-soft-border shrink-0 flex-wrap">
+            ${MODE_BUTTONS.map(b => `
+                <button data-mode="${b.mode}"
+                        class="px-4 py-2 bg-soft-yellow/40 text-soft-text font-bold
+                               rounded-full hover:bg-soft-yellow/70">${b.label}</button>
+            `).join('')}
+        </div>
 
-        <div data-role="workspace" class="flex-1 flex flex-col items-center justify-center p-4 overflow-auto">
-            <div data-role="tiokompisar-zone" class="w-full max-w-2xl"></div>
-            <div data-role="grid-zone" class="w-full max-w-2xl"></div>
+        <div class="flex-1 relative overflow-auto p-4 flex items-center justify-center">
+
+            <div data-role="friends-view" class="w-full max-w-4xl h-full flex flex-col items-center">
+                <h3 class="text-2xl font-bold text-soft-text mb-6">Gruppera tiokompisarna</h3>
+                <div class="flex w-full gap-8 h-64 mb-8">
+                    <div data-zone="1"
+                         class="flex-1 border-4 border-dashed border-soft-pinkLight rounded-3xl
+                                bg-soft-pinkLight/10 flex flex-wrap content-start p-4 gap-2 relative"></div>
+                    <div class="flex items-center text-5xl font-bold text-soft-border">+</div>
+                    <div data-zone="2"
+                         class="flex-1 border-4 border-dashed border-soft-blueLight rounded-3xl
+                                bg-soft-blueLight/10 flex flex-wrap content-start p-4 gap-2 relative"></div>
+                </div>
+                <div class="text-4xl font-bold text-soft-text bg-white shadow-lg px-8 py-4
+                            rounded-full border border-soft-border">
+                    <span data-role="count-1" class="text-soft-pink">5</span> +
+                    <span data-role="count-2" class="text-soft-blue">5</span> = 10
+                </div>
+            </div>
+
+            <div data-role="grid-view" class="hidden flex-col items-center pb-10">
+                <div data-role="grid-equation"
+                     class="h-16 flex items-center justify-center text-2xl md:text-3xl
+                            font-bold text-soft-purple mb-4 bg-soft-purpleLight/20 px-8 rounded-full">
+                    För musen över eller tryck på rutorna
+                </div>
+                <div data-role="grid-table"
+                     class="bg-white p-4 shadow-lg rounded-xl border border-soft-border overflow-x-auto"></div>
+            </div>
+
         </div>`;
     }
 
     #cacheRefs() {
-        const $  = sel => this.#root.querySelector(sel);
+        const $ = sel => this.#root.querySelector(sel);
         const $$ = sel => this.#root.querySelectorAll(sel);
         this.#els = {
-            modeBtns:        $$('[data-mode]'),
-            infoPanel:       $('[data-role="info-panel"]'),
-            tiokompisarZone: $('[data-role="tiokompisar-zone"]'),
-            gridZone:        $('[data-role="grid-zone"]'),
+            modeButtons:  $$('[data-mode]'),
+            friendsView:  $('[data-role="friends-view"]'),
+            zone1:        this.#root.querySelector('[data-zone="1"]'),
+            zone2:        this.#root.querySelector('[data-zone="2"]'),
+            count1:       $('[data-role="count-1"]'),
+            count2:       $('[data-role="count-2"]'),
+            gridView:     $('[data-role="grid-view"]'),
+            gridEquation: $('[data-role="grid-equation"]'),
+            gridTable:    $('[data-role="grid-table"]'),
         };
     }
 
     #wireEvents() {
         this.#root.addEventListener('click', evt => {
             const modeBtn = evt.target.closest('[data-mode]');
-            if (modeBtn) {
-                this.#engine.setMode(modeBtn.dataset.mode);
-                return;
-            }
-            if (evt.target.closest('[data-action="reset"]')) {
-                this.#engine.reset();
-            }
+            if (modeBtn) this.#engine.setMode(modeBtn.dataset.mode);
         });
     }
 
     #render(reading) {
-        for (const btn of this.#els.modeBtns) {
-            btn.classList.toggle('active', btn.dataset.mode === reading.mode);
-        }
-
-        if (reading.mode === 'tiokompisar') {
-            this.#els.tiokompisarZone.style.display = '';
-            this.#els.gridZone.style.display = 'none';
-            this.#renderTiokompisar(reading);
-            this.#els.infoPanel.innerHTML =
-                `<i class="fas fa-lightbulb mr-1"></i>Dra bollarna mellan zonerna. Summan blir alltid 10!`;
+        if (reading.isFriends) {
+            this.#showFriends();
+            this.#renderFriends(reading);
         } else {
-            this.#els.tiokompisarZone.style.display = 'none';
-            this.#els.gridZone.style.display = '';
+            this.#showGrid();
             this.#renderGrid(reading);
-            if (reading.mode === 'multiplikation') {
-                this.#els.infoPanel.innerHTML =
-                    `<i class="fas fa-lightbulb mr-1"></i>För muspekaren över rutorna för att se rad och kolumn.`;
-            } else {
-                this.#els.infoPanel.innerHTML =
-                    `<i class="fas fa-lightbulb mr-1"></i>Klicka på rutorna för att markera dem.`;
+        }
+    }
+
+    #showFriends() {
+        this.#els.friendsView.classList.remove('hidden');
+        this.#els.friendsView.classList.add('flex');
+        this.#els.gridView.classList.add('hidden');
+        this.#els.gridView.classList.remove('flex');
+    }
+
+    #showGrid() {
+        this.#els.gridView.classList.remove('hidden');
+        this.#els.gridView.classList.add('flex');
+        this.#els.friendsView.classList.add('hidden');
+        this.#els.friendsView.classList.remove('flex');
+    }
+
+    #renderFriends(reading) {
+        if (this.#els.zone1.querySelectorAll('[data-ball-index]').length +
+            this.#els.zone2.querySelectorAll('[data-ball-index]').length !== NUM_BALLS) {
+            this.#buildBalls();
+        }
+
+        for (let i = 0; i < NUM_BALLS; i++) {
+            const ball = this.#root.querySelector(`[data-ball-index="${i}"]`);
+            if (!ball) continue;
+            const targetZone = reading.ballZones[i];
+            const currentZone = ball.parentElement.dataset.zone;
+            if (currentZone !== String(targetZone)) {
+                const target = targetZone === 1 ? this.#els.zone1 : this.#els.zone2;
+                target.appendChild(ball);
             }
+            ball.style.backgroundColor = targetZone === 1 ? ZONE1_COLOR : ZONE2_COLOR;
+        }
+
+        this.#els.count1.textContent = reading.zone1Count;
+        this.#els.count2.textContent = reading.zone2Count;
+    }
+
+    #buildBalls() {
+        this.#els.zone1.querySelectorAll('[data-ball-index]').forEach(b => b.remove());
+        this.#els.zone2.querySelectorAll('[data-ball-index]').forEach(b => b.remove());
+
+        for (let i = 0; i < NUM_BALLS; i++) {
+            const ball = document.createElement('div');
+            ball.dataset.ballIndex = i;
+            ball.className = 'w-12 h-12 rounded-full shadow-md cursor-grab active:cursor-grabbing border-2 border-white';
+            ball.style.touchAction = 'none';
+            ball.style.userSelect  = 'none';
+            this.#wireBallDrag(ball, i);
+            this.#els.zone1.appendChild(ball);
         }
     }
 
-    #renderTiokompisar(reading) {
-        const zone = this.#els.tiokompisarZone;
-        const { leftCount, rightCount } = reading;
+    #wireBallDrag(ball, ballIndex) {
+        let dragging = false;
+        let startX = 0, startY = 0;
+        let originalParent = null;
+        let originalRect = null;
 
-        zone.innerHTML = `
-            <div class="text-center mb-4">
-                <span class="text-4xl font-extrabold text-soft-blue">${leftCount}</span>
-                <span class="text-3xl font-bold text-soft-muted mx-3">+</span>
-                <span class="text-4xl font-extrabold text-soft-pink">${rightCount}</span>
-                <span class="text-3xl font-bold text-soft-muted mx-3">=</span>
-                <span class="text-4xl font-extrabold text-soft-green">10</span>
-            </div>
-            <div class="flex gap-4">
-                <div data-zone="left"
-                     class="flex-1 min-h-48 bg-soft-blueLight/10 border-2 border-soft-blueLight/30
-                            border-dashed rounded-2xl p-4 flex flex-wrap gap-2 content-start"></div>
-                <div data-zone="right"
-                     class="flex-1 min-h-48 bg-soft-pinkLight/10 border-2 border-soft-pinkLight/30
-                            border-dashed rounded-2xl p-4 flex flex-wrap gap-2 content-start"></div>
-            </div>`;
+        ball.addEventListener('pointerdown', e => {
+            dragging = true;
+            startX = e.clientX;
+            startY = e.clientY;
+            originalParent = ball.parentElement;
+            originalRect = ball.getBoundingClientRect();
 
-        const leftZone  = zone.querySelector('[data-zone="left"]');
-        const rightZone = zone.querySelector('[data-zone="right"]');
-        for (let i = 0; i < leftCount; i++) {
-            leftZone.appendChild(this.#makeBall(i, 'left'));
-        }
-        for (let i = 0; i < rightCount; i++) {
-            rightZone.appendChild(this.#makeBall(leftCount + i, 'right'));
-        }
+            ball.style.position = 'fixed';
+            ball.style.left  = originalRect.left + 'px';
+            ball.style.top   = originalRect.top + 'px';
+            ball.style.zIndex = '1000';
+            document.body.appendChild(ball);
 
-        for (const z of [leftZone, rightZone]) {
-            z.addEventListener('dragover', e => e.preventDefault());
-            z.addEventListener('drop', e => {
-                e.preventDefault();
-                const which = z.dataset.zone;
-                this.#engine.moveBall(which);
-            });
-        }
-    }
-
-    #makeBall(id, zone) {
-        const ball = document.createElement('div');
-        ball.className = 'w-10 h-10 rounded-full cursor-grab shadow';
-        ball.style.background = zone === 'left' ? '#5b80a5' : '#a85c72';
-        ball.draggable = true;
-        ball.dataset.ballId = id;
-        ball.dataset.zone = zone;
-        ball.addEventListener('dragstart', e => {
-            e.dataTransfer.setData('text/plain', String(id));
+            ball.setPointerCapture(e.pointerId);
+            e.preventDefault();
         });
-        return ball;
+
+        ball.addEventListener('pointermove', e => {
+            if (!dragging) return;
+            const dx = e.clientX - startX;
+            const dy = e.clientY - startY;
+            ball.style.left = (originalRect.left + dx) + 'px';
+            ball.style.top  = (originalRect.top  + dy) + 'px';
+        });
+
+        ball.addEventListener('pointerup', e => {
+            if (!dragging) return;
+            dragging = false;
+            ball.releasePointerCapture(e.pointerId);
+
+            const r1 = this.#els.zone1.getBoundingClientRect();
+            const r2 = this.#els.zone2.getBoundingClientRect();
+            const ballRect = ball.getBoundingClientRect();
+            const cx = ballRect.left + ballRect.width  / 2;
+            const cy = ballRect.top  + ballRect.height / 2;
+
+            let droppedZone = null;
+            if (cx >= r1.left && cx <= r1.right && cy >= r1.top && cy <= r1.bottom) droppedZone = 1;
+            else if (cx >= r2.left && cx <= r2.right && cy >= r2.top && cy <= r2.bottom) droppedZone = 2;
+
+            ball.style.position = '';
+            ball.style.left = '';
+            ball.style.top  = '';
+            ball.style.zIndex = '';
+
+            if (droppedZone === null) {
+                originalParent.appendChild(ball);
+            } else {
+                this.#engine.setBallZone(ballIndex, droppedZone);
+            }
+        });
     }
 
     #renderGrid(reading) {
-        const zone = this.#els.gridZone;
-        const { mode, selectedCells } = reading;
-
-        let html = '<div class="grid grid-cols-10 gap-1 max-w-fit mx-auto">';
-        for (let r = 1; r <= 10; r++) {
-            for (let c = 1; c <= 10; c++) {
-                const key = `${r},${c}`;
-                const selected = selectedCells?.has?.(key) || selectedCells?.includes?.(key);
-                html += `<button data-cell="${r},${c}"
-                                 class="w-10 h-10 border border-soft-border rounded text-sm font-bold transition-colors
-                                        ${selected ? 'bg-soft-blue text-white' : 'bg-soft-bg hover:bg-soft-blueLight/40'}">${r * c}</button>`;
-            }
+        if (this.#lastBuiltGridMode !== reading.mode) {
+            this.#buildGridTable(reading.isMultiplication);
+            this.#lastBuiltGridMode = reading.mode;
+            this.#pinnedTd = null;
+            this.#pinnedEqHTML = '';
+            this.#els.gridEquation.innerHTML = 'För musen över eller tryck på rutorna';
         }
-        html += '</div>';
-        zone.innerHTML = html;
+    }
 
-        // Wire grid interactions
-        const cells = zone.querySelectorAll('[data-cell]');
-        for (const cell of cells) {
-            if (mode === 'multiplikation') {
-                cell.addEventListener('mouseenter', () => {
-                    const [r, c] = cell.dataset.cell.split(',').map(Number);
-                    for (const other of cells) {
-                        const [or, oc] = other.dataset.cell.split(',').map(Number);
-                        if (or === r || oc === c) {
-                            other.style.background = '#dbeafe';
-                        }
-                    }
-                });
-                cell.addEventListener('mouseleave', () => {
-                    for (const other of cells) other.style.background = '';
-                });
-            } else if (mode === 'division') {
-                cell.addEventListener('click', () => {
-                    this.#engine.toggleCell(cell.dataset.cell);
-                });
+    #buildGridTable(isMultiplication) {
+        const container = this.#els.gridTable;
+        container.innerHTML = '';
+
+        const cells = CountingEngine.gridCells(isMultiplication);
+        const table = document.createElement('table');
+        table.className = 'border-collapse';
+
+        cells.forEach((rowCells, i) => {
+            const tr = document.createElement('tr');
+            rowCells.forEach((c, j) => {
+                const isHeader = c.kind === 'corner' || c.kind === 'header';
+                const td = document.createElement(isHeader ? 'th' : 'td');
+                td.className =
+                    'w-12 h-12 text-center border border-soft-border math-grid-cell cursor-pointer ' +
+                    (isHeader ? 'bg-soft-bg text-soft-muted font-bold' : 'text-soft-text');
+                td.textContent = c.text;
+
+                if (c.kind === 'cell') {
+                    this.#wireCellHighlight(td, tr, table, c.equationHTML, j);
+                }
+                tr.appendChild(td);
+            });
+            table.appendChild(tr);
+        });
+
+        let touchHoverTd = null;
+        const tdAt = (x, y) => {
+            const el = document.elementFromPoint(x, y);
+            return el ? (el.tagName === 'TD' ? el : el.closest?.('td')) : null;
+        };
+        const setTouchHover = td => {
+            if (td === touchHoverTd) return;
+            if (touchHoverTd?.onmouseleave) touchHoverTd.onmouseleave();
+            touchHoverTd = td;
+            if (td?.onmouseenter) td.onmouseenter();
+        };
+        table.addEventListener('touchstart', e => {
+            if (!e.touches.length) return;
+            setTouchHover(tdAt(e.touches[0].clientX, e.touches[0].clientY));
+        }, { passive: true });
+        table.addEventListener('touchmove', e => {
+            if (!e.touches.length) return;
+            setTouchHover(tdAt(e.touches[0].clientX, e.touches[0].clientY));
+        }, { passive: true });
+        table.addEventListener('touchend', () => { touchHoverTd = null; }, { passive: true });
+        table.addEventListener('touchcancel', () => {
+            if (touchHoverTd?.onmouseleave) touchHoverTd.onmouseleave();
+            touchHoverTd = null;
+        }, { passive: true });
+
+        container.appendChild(table);
+    }
+
+    #wireCellHighlight(td, tr, table, eqHTML, colIndex) {
+        const highlightRowCol = on => {
+            const fn = on ? 'add' : 'remove';
+            Array.from(table.rows).forEach(r => {
+                if (r.cells[colIndex]) r.cells[colIndex].classList[fn]('highlight-row-col');
+            });
+            Array.from(tr.cells).forEach(c => c.classList[fn]('highlight-row-col'));
+        };
+
+        td.onmouseenter = () => {
+            highlightRowCol(true);
+            this.#els.gridEquation.innerHTML = eqHTML;
+        };
+        td.onmouseleave = () => {
+            if (this.#pinnedTd !== td) {
+                highlightRowCol(false);
+                this.#els.gridEquation.innerHTML =
+                    this.#pinnedTd ? this.#pinnedEqHTML : 'För musen över eller tryck på rutorna';
             }
-        }
+        };
+        td.onclick = () => {
+            table.querySelectorAll('.highlight-row-col').forEach(el =>
+                el.classList.remove('highlight-row-col'));
+            if (this.#pinnedTd === td) {
+                this.#pinnedTd = null;
+                this.#pinnedEqHTML = '';
+            } else {
+                this.#pinnedTd = td;
+                this.#pinnedEqHTML = eqHTML;
+            }
+            highlightRowCol(true);
+            this.#els.gridEquation.innerHTML = eqHTML;
+        };
     }
 }
