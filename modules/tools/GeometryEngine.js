@@ -1,7 +1,6 @@
 // ═══════════════════════════════════════════════════════════════════════════
 // modules/tools/GeometryEngine.js
-// Stage 1 — pure model for 2D shape workspace: shapes array + selection.
-// Stage 2 will add 3D objects. Stage 3 will add the formula calculator.
+// Stage 2 — adds 3D objects + auto-rotate flag.
 // ═══════════════════════════════════════════════════════════════════════════
 
 export const SHAPE_DEFS_2D = Object.freeze({
@@ -15,23 +14,45 @@ export const SHAPE_DEFS_2D = Object.freeze({
     parallelogram: { label: 'Parallellogram', dims: ['b', 'h'] },
 });
 
+export const SHAPE_DEFS_3D = Object.freeze({
+    cylinder: { label: 'Cylinder', dims: ['r', 'h'] },
+    cube:     { label: 'Kub',      dims: ['a'] },
+    cuboid:   { label: 'Rätblock', dims: ['l', 'w', 'h'] },
+    sphere:   { label: 'Klot',     dims: ['r'] },
+    pyramid:  { label: 'Pyramid',  dims: ['a', 'h'] },
+    cone:     { label: 'Kon',      dims: ['r', 'h'] },
+});
+
 const VALID_2D_TYPES = Object.keys(SHAPE_DEFS_2D);
+const VALID_3D_TYPES = Object.keys(SHAPE_DEFS_3D);
 const ROT_STEP_DEG = 15;
-const MIN_SCALE = 0.3;
-const MAX_SCALE = 5;
+const MIN_SCALE_2D = 0.3;
+const MAX_SCALE_2D = 5;
+const MIN_SCALE_3D = 0.4;
+const MAX_SCALE_3D = 4;
 
 let nextId = 1;
 
 export class GeometryEngine {
     #shapes = [];
     #selectedId = null;
+    #autoRotate3D = true;
     #listeners = new Set();
 
     add2DShape(type, x = 100, y = 100) {
         if (!VALID_2D_TYPES.includes(type)) return null;
+        return this.#addShape({ kind: '2d', type, x, y });
+    }
+
+    add3DShape(type, x = 100, y = 100) {
+        if (!VALID_3D_TYPES.includes(type)) return null;
+        return this.#addShape({ kind: '3d', type, x, y });
+    }
+
+    #addShape({ kind, type, x, y }) {
         const shape = {
             id: nextId++,
-            kind: '2d',
+            kind,
             type,
             x,
             y,
@@ -55,7 +76,10 @@ export class GeometryEngine {
     setScale(id, scale) {
         const s = this.#findById(id);
         if (!s) return;
-        s.scale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, scale));
+        const [lo, hi] = s.kind === '3d'
+            ? [MIN_SCALE_3D, MAX_SCALE_3D]
+            : [MIN_SCALE_2D, MAX_SCALE_2D];
+        s.scale = Math.max(lo, Math.min(hi, scale));
         this.#emit();
     }
 
@@ -77,6 +101,7 @@ export class GeometryEngine {
         if (this.#selectedId == null) return;
         const s = this.#findById(this.#selectedId);
         if (!s) return;
+        if (s.kind !== '2d') return;
         s.rotation = (s.rotation || 0) + deltaDeg;
         this.#emit();
     }
@@ -97,6 +122,18 @@ export class GeometryEngine {
         this.#emit();
     }
 
+    setAutoRotate3D(on) {
+        const v = !!on;
+        if (this.#autoRotate3D === v) return;
+        this.#autoRotate3D = v;
+        this.#emit();
+    }
+
+    toggleAutoRotate3D() {
+        this.#autoRotate3D = !this.#autoRotate3D;
+        this.#emit();
+    }
+
     getReading() {
         const selected = this.#selectedId == null
             ? null
@@ -105,7 +142,9 @@ export class GeometryEngine {
             shapes:       Object.freeze(this.#shapes.map(s => ({ ...s }))),
             selectedId:   this.#selectedId,
             selectedType: selected ? selected.type : null,
+            selectedKind: selected ? selected.kind : null,
             hasSelection: selected != null,
+            autoRotate3D: this.#autoRotate3D,
         });
     }
 
