@@ -1,7 +1,6 @@
 // ═══════════════════════════════════════════════════════════════════════════
 // modules/tools/DecimaltalView.js
-// Stage 1 view: sidebar (input + shift buttons + value + toggle + reset)
-// and the place-value table with animated digit tokens.
+// Stage 2 — Stage 1 table + Basmaterial panel + Split/Merge actions.
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { DecimaltalEngine, DEC_COL_DEFS } from './DecimaltalEngine.js';
@@ -19,6 +18,22 @@ const SHIFT_BUTTONS = [
 
 const MUL_STYLE = 'background:rgba(21,101,192,0.10);border-color:#1565C0;color:#1565C0;';
 const DIV_STYLE = 'background:rgba(183,28,28,0.10);border-color:#B71C1C;color:#B71C1C;';
+const TOGGLE_ON_STYLE  = 'background:rgba(61,138,138,0.15);border-color:#3d8a8a;color:#3d8a8a;';
+const TOGGLE_OFF_STYLE = 'background:rgba(91,128,165,0.08);border-color:#8c8d92;color:#8c8d92;';
+
+const BLOCK_SIZES = {
+    ones:       { w: 120, h: 120 },
+    tenths:     { w: 12,  h: 120 },
+    hundredths: { w: 12,  h: 12 },
+};
+
+const BLOCK_COLORS = {
+    ones:       '#2E7D32',
+    tenths:     '#6A1B9A',
+    hundredths: '#00695C',
+};
+
+const MAX_BLOCKS_SHOWN = { tenths: 30, hundredths: 100 };
 
 export class DecimaltalView {
     #engine;
@@ -55,9 +70,7 @@ export class DecimaltalView {
         return this.#root;
     }
 
-    onEnter() {
-        if (this.#lastReading) this.#positionTokens(false);
-    }
+    onEnter() { if (this.#lastReading) this.#positionTokens(false); }
     onLeave() {}
     destroy() {
         if (this.#resizeListener) window.removeEventListener('resize', this.#resizeListener);
@@ -110,26 +123,46 @@ export class DecimaltalView {
 
             <div>
                 <h4 class="font-bold text-xs uppercase tracking-wider text-soft-muted mb-3">Visa / Dölj</h4>
-                <button data-action="toggle-columns"
-                        class="flex items-center gap-2 px-3 py-2 rounded-xl border
-                               font-bold text-sm transition-all w-full"
-                        style="background:rgba(61,138,138,0.15);border-color:#3d8a8a;color:#3d8a8a;">
-                    <i class="fas fa-eye text-sm" data-role="toggle-icon"></i> Kolumnavdelare
-                </button>
+                <div class="flex flex-col gap-2">
+                    <button data-action="toggle-columns" data-toggle-btn="columns"
+                            class="flex items-center gap-2 px-3 py-2 rounded-xl border font-bold text-sm w-full"
+                            style="${TOGGLE_ON_STYLE}">
+                        <i class="fas fa-eye text-sm" data-toggle-icon="columns"></i>
+                        <span>Kolumnavdelare</span>
+                    </button>
+                    <button data-action="toggle-blocks" data-toggle-btn="blocks"
+                            class="flex items-center gap-2 px-3 py-2 rounded-xl border font-bold text-sm w-full"
+                            style="${TOGGLE_OFF_STYLE}">
+                        <i class="fas fa-cubes text-sm" data-toggle-icon="blocks"></i>
+                        <span>Basmaterial</span>
+                    </button>
+                    <button data-action="toggle-split" data-toggle-btn="split"
+                            class="flex items-center gap-2 px-3 py-2 rounded-xl border font-bold text-sm w-full"
+                            style="${TOGGLE_OFF_STYLE}">
+                        <i class="fas fa-expand-arrows-alt text-sm" data-toggle-icon="split"></i>
+                        <span>Dela / Slå ihop</span>
+                    </button>
+                </div>
             </div>
 
             <hr class="border-soft-border"/>
             <button data-action="reset"
-                    class="bg-soft-text hover:bg-soft-muted text-white p-2
-                           rounded-lg text-sm font-semibold mt-auto">
+                    class="bg-soft-text hover:bg-soft-muted text-white p-2 rounded-lg text-sm font-semibold mt-auto">
                 <i class="fas fa-trash mr-1"></i> Rensa
             </button>
         </div>
 
-        <div data-role="workspace" class="flex-1 flex flex-col overflow-hidden">
+        <div data-role="workspace" class="flex-1 flex flex-col overflow-auto">
             <div data-role="table" class="dec-table"
                  title="Dra vänster/höger för att flytta siffror">
                 <div data-role="tokens-layer" id="dec-tokens-layer"></div>
+            </div>
+            <div data-role="blocks-panel" class="dec-tab-panel" style="display:none;">
+                <h4 class="font-bold text-sm text-soft-text uppercase tracking-wider">
+                    <i class="fas fa-cubes mr-1 text-soft-green"></i>Basmaterial
+                </h4>
+                <div data-role="blocks-area" class="dec-blocks-aligned"></div>
+                <div data-role="blocks-actions" class="flex gap-3 flex-wrap"></div>
             </div>
         </div>`;
     }
@@ -143,9 +176,20 @@ export class DecimaltalView {
             rangeWarning:  $('[data-role="range-warning"]'),
             table:         $('[data-role="table"]'),
             tokensLayer:   $('[data-role="tokens-layer"]'),
-            toggleIcon:    $('[data-role="toggle-icon"]'),
-            toggleBtn:     $('[data-action="toggle-columns"]'),
             shiftBtns:     $$('[data-shift]'),
+            toggleBtns:    {
+                columns: $('[data-toggle-btn="columns"]'),
+                blocks:  $('[data-toggle-btn="blocks"]'),
+                split:   $('[data-toggle-btn="split"]'),
+            },
+            toggleIcons: {
+                columns: $('[data-toggle-icon="columns"]'),
+                blocks:  $('[data-toggle-icon="blocks"]'),
+                split:   $('[data-toggle-icon="split"]'),
+            },
+            blocksPanel:   $('[data-role="blocks-panel"]'),
+            blocksArea:    $('[data-role="blocks-area"]'),
+            blocksActions: $('[data-role="blocks-actions"]'),
         };
     }
 
@@ -196,16 +240,29 @@ export class DecimaltalView {
                 this.#engine.shift(Number(shiftBtn.dataset.shift));
                 return;
             }
-            if (evt.target.closest('[data-action="reset"]')) {
+            const action = evt.target.closest('[data-action]')?.dataset.action;
+            if (action === 'reset') {
                 this.#engine.reset();
                 this.#els.input.value = '';
                 return;
             }
-            if (evt.target.closest('[data-action="toggle-columns"]')) {
-                const next = !(this.#lastReading?.columnsVisible ?? true);
-                this.#engine.setColumnsVisible(next);
+            if (action === 'toggle-columns') {
+                this.#engine.setColumnsVisible(!(this.#lastReading?.columnsVisible ?? true));
                 return;
             }
+            if (action === 'toggle-blocks') {
+                this.#engine.setBlocksVisible(!(this.#lastReading?.blocksVisible ?? false));
+                return;
+            }
+            if (action === 'toggle-split') {
+                this.#engine.setSplitVisible(!(this.#lastReading?.splitVisible ?? false));
+                return;
+            }
+            const blockAction = evt.target.closest('[data-block-action]')?.dataset.blockAction;
+            if (blockAction === 'split-one')        this.#engine.splitOne();
+            if (blockAction === 'merge-tenths')     this.#engine.mergeTenths();
+            if (blockAction === 'split-tenth')      this.#engine.splitTenth();
+            if (blockAction === 'merge-hundredths') this.#engine.mergeHundredths();
         });
 
         const table = this.#els.table;
@@ -241,17 +298,124 @@ export class DecimaltalView {
         }
 
         this.#els.table.classList.toggle('hide-dividers', !reading.columnsVisible);
-        const icon = this.#els.toggleIcon;
-        const btn  = this.#els.toggleBtn;
-        if (reading.columnsVisible) {
-            btn.style.cssText = 'background:rgba(61,138,138,0.15);border-color:#3d8a8a;color:#3d8a8a;';
-            if (icon) icon.className = 'fas fa-eye text-sm';
-        } else {
-            btn.style.cssText = 'background:rgba(91,128,165,0.08);border-color:#8c8d92;color:#8c8d92;';
-            if (icon) icon.className = 'fas fa-eye-slash text-sm';
-        }
+
+        this.#syncToggleBtn('columns', reading.columnsVisible,
+            'fas fa-eye text-sm', 'fas fa-eye-slash text-sm');
+        this.#syncToggleBtn('blocks', reading.blocksVisible,
+            'fas fa-cubes text-sm', 'fas fa-cubes text-sm');
+        this.#syncToggleBtn('split', reading.splitVisible,
+            'fas fa-expand-arrows-alt text-sm', 'fas fa-expand-arrows-alt text-sm');
+
+        this.#els.blocksPanel.style.display = reading.blocksVisible ? 'flex' : 'none';
+        if (reading.blocksVisible) this.#renderBlocks(reading);
 
         this.#rebuildTokens(reading);
+    }
+
+    #syncToggleBtn(key, isOn, iconOn, iconOff) {
+        const btn  = this.#els.toggleBtns[key];
+        const icon = this.#els.toggleIcons[key];
+        if (!btn) return;
+        btn.style.cssText = isOn ? TOGGLE_ON_STYLE : TOGGLE_OFF_STYLE;
+        if (icon) icon.className = isOn ? iconOn : iconOff;
+    }
+
+    #renderBlocks(reading) {
+        const area    = this.#els.blocksArea;
+        const actions = this.#els.blocksActions;
+        area.innerHTML    = '';
+        actions.innerHTML = '';
+
+        const b = reading.blocks;
+        const isEmpty = b.ones === 0 && b.tenths === 0 && b.hundredths === 0;
+
+        if (isEmpty) {
+            const msg = document.createElement('p');
+            msg.className = 'text-soft-muted text-sm italic px-4 py-4';
+            msg.textContent = 'Skriv ett decimaltal för att se basmaterialet.';
+            area.appendChild(msg);
+        } else {
+            DEC_COL_DEFS.forEach((col, i) => {
+                if (i === 4) {
+                    const sep = document.createElement('div');
+                    sep.className = 'dec-blocks-sep';
+                    area.appendChild(sep);
+                }
+                const colDiv = document.createElement('div');
+                colDiv.className = 'dec-blocks-col';
+
+                if (col.key === 'ental' && b.ones > 0) {
+                    this.#addBlocksRow(colDiv, 'Ental', b.ones, 'ones');
+                } else if (col.key === 'tiondelar' && b.tenths > 0) {
+                    this.#addBlocksRow(colDiv, 'Tiondelar', b.tenths, 'tenths');
+                } else if (col.key === 'hundradelar' && b.hundredths > 0) {
+                    this.#addBlocksRow(colDiv, 'Hundradelar', b.hundredths, 'hundredths');
+                }
+                area.appendChild(colDiv);
+            });
+        }
+
+        if (reading.splitVisible) this.#renderSplitButtons(actions, b);
+    }
+
+    #addBlocksRow(colDiv, labelText, count, kind) {
+        const max = MAX_BLOCKS_SHOWN[kind] ?? Infinity;
+        const truncated = count > max;
+        const showCount = Math.min(count, max);
+
+        const lbl = document.createElement('div');
+        lbl.className = 'text-xs font-bold uppercase tracking-wide mb-1';
+        lbl.style.color = BLOCK_COLORS[kind];
+        lbl.textContent = `${labelText} ×${count}${truncated ? ` (max ${max})` : ''}`;
+        colDiv.appendChild(lbl);
+
+        const row = document.createElement('div');
+        row.className = 'dec-blk-row';
+        row.style.cssText = 'display:flex;flex-wrap:wrap;gap:3px;line-height:0;';
+        if (kind === 'hundredths') {
+            row.style.maxWidth = (BLOCK_SIZES.hundredths.w * 10 + 3 * 9) + 'px';
+        }
+
+        for (let j = 0; j < showCount; j++) {
+            const w = document.createElement('div');
+            w.style.cssText = 'display:inline-block;line-height:0;';
+            w.appendChild(makeFlatPlate(BLOCK_SIZES[kind].w, BLOCK_SIZES[kind].h, BLOCK_COLORS[kind]));
+            row.appendChild(w);
+        }
+        colDiv.appendChild(row);
+    }
+
+    #renderSplitButtons(actions, b) {
+        const btnStyle = 'px-3 py-1.5 rounded font-bold text-xs border-2 cursor-pointer transition-all hover:opacity-80';
+
+        const make = (action, style, html) => {
+            const btn = document.createElement('button');
+            btn.className = btnStyle;
+            btn.style.cssText = style;
+            btn.dataset.blockAction = action;
+            btn.innerHTML = html;
+            return btn;
+        };
+
+        const greenStyle  = 'background:#C8E6C9;border-color:#2E7D32;color:#1B5E20;';
+        const purpleStyle = 'background:#E1BEE7;border-color:#6A1B9A;color:#4A148C;';
+
+        if (b.ones > 0) {
+            actions.appendChild(make('split-one', greenStyle,
+                '<i class="fas fa-expand-arrows-alt mr-1"></i>Dela 1 ental → 10 tiondelar'));
+        }
+        if (b.tenths >= 10) {
+            actions.appendChild(make('merge-tenths', greenStyle,
+                '<i class="fas fa-compress-arrows-alt mr-1"></i>Slå ihop 10 tiondelar → 1 ental'));
+        }
+        if (b.tenths > 0) {
+            actions.appendChild(make('split-tenth', purpleStyle,
+                '<i class="fas fa-expand-arrows-alt mr-1"></i>Dela 1 tiondel → 10 hundradelar'));
+        }
+        if (b.hundredths >= 10) {
+            actions.appendChild(make('merge-hundredths', purpleStyle,
+                '<i class="fas fa-compress-arrows-alt mr-1"></i>Slå ihop 10 hundradelar → 1 tiondel'));
+        }
     }
 
     #rebuildTokens(reading) {
@@ -320,4 +484,25 @@ export class DecimaltalView {
             }
         });
     }
+}
+
+function makeFlatPlate(w, h, color) {
+    const ns = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('width',   w);
+    svg.setAttribute('height',  h);
+    svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+    svg.style.display  = 'block';
+    svg.style.overflow = 'visible';
+
+    const rect = document.createElementNS(ns, 'rect');
+    rect.setAttribute('x', 0);
+    rect.setAttribute('y', 0);
+    rect.setAttribute('width',  w);
+    rect.setAttribute('height', h);
+    rect.setAttribute('fill',   color);
+    rect.setAttribute('stroke', '#1a1a1a');
+    rect.setAttribute('stroke-width', '1.5');
+    svg.appendChild(rect);
+    return svg;
 }
