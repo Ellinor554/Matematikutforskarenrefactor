@@ -1,6 +1,6 @@
 // ═══════════════════════════════════════════════════════════════════════════
 // modules/tools/DecimaltalEngine.js
-// Stage 1 — pure place-value model: digit positions, shift, headers, value.
+// Stage 2 — adds Basmaterial blocks state + split/merge.
 // ═══════════════════════════════════════════════════════════════════════════
 
 export const DEC_COL_DEFS = Object.freeze([
@@ -19,10 +19,16 @@ const MAX_POS = 3;
 export class DecimaltalEngine {
     #digits = [];
     #columnsVisible = true;
+    #blocksVisible  = false;
+    #splitVisible   = false;
+    #blocks = { ones: 0, tenths: 0, hundredths: 0 };
+    #lastSplitOp = null;
     #listeners = new Set();
 
     setFromString(str) {
         this.#digits = parseInput(str);
+        this.#syncBlocksFromDigits();
+        this.#lastSplitOp = null;
         this.#emit();
     }
 
@@ -30,12 +36,16 @@ export class DecimaltalEngine {
         if (!steps || this.#digits.length === 0) return;
         this.#digits = this.#digits.map(d => ({ ...d, pos: d.pos + steps }));
         this.#insertPlaceholderZeros();
+        this.#syncBlocksFromDigits();
+        this.#lastSplitOp = null;
         this.#emit();
     }
 
     reset() {
-        if (this.#digits.length === 0) return;
+        if (this.#digits.length === 0 && this.#blocksAreZero()) return;
         this.#digits = [];
+        this.#blocks = { ones: 0, tenths: 0, hundredths: 0 };
+        this.#lastSplitOp = null;
         this.#emit();
     }
 
@@ -43,6 +53,52 @@ export class DecimaltalEngine {
         const v = !!visible;
         if (this.#columnsVisible === v) return;
         this.#columnsVisible = v;
+        this.#emit();
+    }
+
+    setBlocksVisible(visible) {
+        const v = !!visible;
+        if (this.#blocksVisible === v) return;
+        this.#blocksVisible = v;
+        this.#emit();
+    }
+
+    setSplitVisible(visible) {
+        const v = !!visible;
+        if (this.#splitVisible === v) return;
+        this.#splitVisible = v;
+        this.#emit();
+    }
+
+    splitOne() {
+        if (this.#blocks.ones <= 0) return;
+        this.#blocks.ones--;
+        this.#blocks.tenths += 10;
+        this.#lastSplitOp = 'split-one';
+        this.#emit();
+    }
+
+    mergeTenths() {
+        if (this.#blocks.tenths < 10) return;
+        this.#blocks.tenths -= 10;
+        this.#blocks.ones++;
+        this.#lastSplitOp = 'merge-tenths';
+        this.#emit();
+    }
+
+    splitTenth() {
+        if (this.#blocks.tenths <= 0) return;
+        this.#blocks.tenths--;
+        this.#blocks.hundredths += 10;
+        this.#lastSplitOp = 'split-tenth';
+        this.#emit();
+    }
+
+    mergeHundredths() {
+        if (this.#blocks.hundredths < 10) return;
+        this.#blocks.hundredths -= 10;
+        this.#blocks.tenths++;
+        this.#lastSplitOp = 'merge-hundredths';
         this.#emit();
     }
 
@@ -67,9 +123,15 @@ export class DecimaltalEngine {
             headerVals:      Object.freeze(headerVals),
             outOfRange,
             columnsVisible:  this.#columnsVisible,
+            blocksVisible:   this.#blocksVisible,
+            splitVisible:    this.#splitVisible,
+            blocks:          Object.freeze({ ...this.#blocks }),
+            lastSplitOp:     this.#lastSplitOp,
             isEmpty:         this.#digits.length === 0,
         });
     }
+
+    getState() { return this.getReading(); }
 
     subscribe(listener) {
         this.#listeners.add(listener);
@@ -85,14 +147,28 @@ export class DecimaltalEngine {
         }
     }
 
+    #blocksAreZero() {
+        return this.#blocks.ones === 0
+            && this.#blocks.tenths === 0
+            && this.#blocks.hundredths === 0;
+    }
+
+    #syncBlocksFromDigits() {
+        this.#blocks = { ones: 0, tenths: 0, hundredths: 0 };
+        for (const d of this.#digits) {
+            if (d.pos === 0)  this.#blocks.ones       = d.val;
+            if (d.pos === -1) this.#blocks.tenths     = d.val;
+            if (d.pos === -2) this.#blocks.hundredths = d.val;
+        }
+    }
+
     #insertPlaceholderZeros() {
         if (this.#digits.length === 0) return;
         const maxPos = Math.max(...this.#digits.map(d => d.pos));
         const minPos = Math.min(...this.#digits.map(d => d.pos));
 
-        if (maxPos < 0) {
-            this.#digits.push({ pos: 0, val: 0 });
-        }
+        if (maxPos < 0) this.#digits.push({ pos: 0, val: 0 });
+
         if (minPos < -1) {
             for (let pos = -1; pos > minPos; pos--) {
                 if (!this.#digits.some(d => d.pos === pos)) {
