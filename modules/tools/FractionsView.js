@@ -1,512 +1,725 @@
-// ─── Constants ────────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+// modules/tools/GeometryView.js
+// Stage 3 — adds Visa formler checkbox, unit dropdown, live formula panel
+// with hover-highlighting. Multi-dim 2D shapes redraw SVG on dim change.
+// ═══════════════════════════════════════════════════════════════════════════
 
-const FRAC_DEFS = [
-    { d: 1,  color: '#6a6281', label: 'Hel (1/1)' },
-    { d: 2,  color: '#a85c72', label: 'Halvor (1/2)' },
-    { d: 3,  color: '#5b80a5', label: 'Tredjedelar (1/3)' },
-    { d: 4,  color: '#4f7c75', label: 'Fjärdedelar (1/4)' },
-    { d: 5,  color: '#dec894', label: 'Femtedelar (1/5)' },
-    { d: 6,  color: '#8db1d1', label: 'Sjättedelar (1/6)' },
-    { d: 8,  color: '#8bb39c', label: 'Åttondelar (1/8)' },
-    { d: 10, color: '#d58b99', label: 'Tiondelar (1/10)' },
-    { d: 12, color: '#938db3', label: 'Tolftedelar (1/12)' },
+import { GeometryEngine, SHAPE_DEFS_2D, SHAPE_DEFS_3D } from './GeometryEngine.js';
+import {
+    getFormulaSpec, cmToUnit, unitToCm,
+    MULTI_DIM_2D_SHAPES, DEFAULT_DIMS_CM,
+} from './GeometryFormulas.js';
+
+const SHAPE_BUTTONS_2D = [
+    { type: 'circle',        label: 'Cirkel',
+      svg: '<circle cx="20" cy="20" r="16" fill="#ffffff" stroke="#000000" stroke-width="2"/>' },
+    { type: 'triangle',      label: 'Triangel',
+      svg: '<polygon points="20,5 37,35 3,35" fill="#ffffff" stroke="#000000" stroke-width="2" stroke-linejoin="round"/>' },
+    { type: 'square',        label: 'Kvadrat',
+      svg: '<rect x="5" y="5" width="30" height="30" fill="#ffffff" stroke="#000000" stroke-width="2"/>' },
+    { type: 'rectangle',     label: 'Rektangel',
+      svg: '<rect x="2" y="11" width="36" height="20" fill="#ffffff" stroke="#000000" stroke-width="2"/>' },
+    { type: 'pentagon',      label: 'Pentagon',
+      svg: '<polygon points="20,3 37,15 31,35 9,35 3,15" fill="#ffffff" stroke="#000000" stroke-width="2"/>' },
+    { type: 'hexagon',       label: 'Hexagon',
+      svg: '<polygon points="20,2 36,11 36,29 20,38 4,29 4,11" fill="#ffffff" stroke="#000000" stroke-width="2"/>' },
+    { type: 'rhombus',       label: 'Romb',
+      svg: '<polygon points="20,3 37,20 20,37 3,20" fill="#ffffff" stroke="#000000" stroke-width="2"/>' },
+    { type: 'parallelogram', label: 'Parallellogram',
+      svg: '<polygon points="10,32 4,8 30,8 36,32" fill="#ffffff" stroke="#000000" stroke-width="2"/>' },
 ];
 
-const FRAC_R           = 72;
-const FRAC_SVG         = FRAC_R * 2 + 8;   // 152
-const FRAC_BOARD_SCALE = 1.5;
+const SHAPE_BUTTONS_3D = [
+    { type: 'cylinder', label: 'Cylinder', iconClass: 'fa-database',  color: '#5b80a5' },
+    { type: 'cube',     label: 'Kub',      iconClass: 'fa-cube',      color: '#4f7c75' },
+    { type: 'cuboid',   label: 'Rätblock', iconClass: 'fa-box',       color: '#5b80a5' },
+    { type: 'sphere',   label: 'Klot',     iconClass: 'fa-globe',     color: '#a85c72' },
+    { type: 'pyramid',  label: 'Pyramid',  iconClass: 'fa-caret-up',  color: '#dec894' },
+    { type: 'cone',     label: 'Kon',      iconClass: 'fa-caret-up',  color: '#938db3' },
+];
 
-// ─── Pure module-level helpers ────────────────────────────────────────────────
+const SHAPE_SIZE_PX = 200;
+const SVG_VIEWBOX  = 120;
+const CARD_3D_SIZE = 240;
+const CARD_3D_HEADER_H = 24;
 
-function fracPolarXY(cx, cy, r, deg) {
-    const rad = (deg - 90) * Math.PI / 180;
-    return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) };
-}
+const TYPE_LABELS_3D = {
+    cylinder: 'Cylinder', cube: 'Kub', cuboid: 'Rätblock',
+    sphere: 'Klot', pyramid: 'Pyramid', cone: 'Kon',
+};
 
-function formatFracDecimal(d) {
-    const val = 1 / d;
-    let str = val.toFixed(3);
-    str = str.replace(/(\.\d*[1-9])0+$/, '$1').replace(/\.(0+)$/, '.0');
-    return str.replace('.', ',');
-}
-
-function formatFracPercent(d) {
-    const pct = 100 / d;
-    if (Number.isInteger(pct)) return pct + '%';
-    return pct.toFixed(1).replace('.', ',') + '%';
-}
-
-function getFracLabels(d, showDecimal, showPercent) {
-    const labels = [];
-    if (d === 1) {
-        labels.push('1');
-        if (showDecimal) labels.push('1,0');
-        if (showPercent) labels.push('100%');
-    } else {
-        labels.push('1/' + d);
-        if (showDecimal) labels.push(formatFracDecimal(d));
-        if (showPercent) labels.push(formatFracPercent(d));
-    }
-    return labels;
-}
-
-function buildStackedLabels(px, py, labels, fs, textColor) {
-    if (labels.length === 0) return '';
-    const spacing = fs * 1.3;
-    let result = '';
-    for (let i = 0; i < labels.length; i++) {
-        const centerY = py - (labels.length - 1) / 2 * spacing + i * spacing;
-        const y = centerY + fs * 0.35;
-        result += `<text x="${px}" y="${y}" text-anchor="middle" font-family="Nunito,sans-serif" font-size="${fs}" font-weight="800" fill="${textColor}" pointer-events="none">${labels[i]}</text>`;
-    }
-    return result;
-}
-
-function buildCircleSVG(d, color, showDecimal, showPercent) {
-    const cx = FRAC_R + 4, cy = FRAC_R + 4, r = FRAC_R;
-    const textColor  = color === '#dec894' ? '#5a4a1a' : '#ffffff';
-    const angleStep  = 360 / d;
-    const labels     = getFracLabels(d, showDecimal, showPercent);
-    let paths = '';
-    if (d === 1) {
-        paths  = `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${color}" stroke="white" stroke-width="2.5"/>`;
-        const fs = labels.length <= 1 ? 22 : labels.length === 2 ? 18 : 14;
-        paths += buildStackedLabels(cx, cy, labels, fs, textColor);
-    } else {
-        for (let i = 0; i < d; i++) {
-            const startA = i * angleStep, endA = startA + angleStep;
-            const p1 = fracPolarXY(cx, cy, r, startA);
-            const p2 = fracPolarXY(cx, cy, r, endA);
-            const lg = angleStep > 180 ? 1 : 0;
-            paths += `<path d="M${cx},${cy} L${p1.x},${p1.y} A${r},${r},0,${lg},1,${p2.x},${p2.y}Z" fill="${color}" stroke="white" stroke-width="2.5" data-slice="${i}" class="frac-slice"/>`;
-            const lp = fracPolarXY(cx, cy, r * 0.62, startA + angleStep / 2);
-            const fsBase = d <= 4 ? 16 : d <= 8 ? 13 : 11;
-            const fs = labels.length >= 3 ? Math.max(8, fsBase - 2) : fsBase;
-            paths += buildStackedLabels(lp.x, lp.y, labels, fs, textColor);
-        }
-    }
-    return `<svg width="${FRAC_SVG}" height="${FRAC_SVG}" viewBox="0 0 ${FRAC_SVG} ${FRAC_SVG}" style="overflow:visible;display:block;">${paths}</svg>`;
-}
-
-function buildLooseSliceSVG(d, sliceIndex, color, showDecimal, showPercent) {
-    const cx = FRAC_R + 4, cy = FRAC_R + 4, r = FRAC_R;
-    const textColor = color === '#dec894' ? '#5a4a1a' : '#ffffff';
-    const angleStep = 360 / d;
-    const startA    = sliceIndex * angleStep;
-    const p1        = fracPolarXY(cx, cy, r, startA);
-    const p2        = fracPolarXY(cx, cy, r, startA + angleStep);
-    const lg        = angleStep > 180 ? 1 : 0;
-    const lp        = fracPolarXY(cx, cy, r * 0.62, startA + angleStep / 2);
-    const labels    = getFracLabels(d, showDecimal, showPercent);
-    const fsBase    = d <= 4 ? 16 : d <= 8 ? 13 : 11;
-    const fs        = labels.length >= 3 ? Math.max(8, fsBase - 2) : fsBase;
-    const path      = `<path d="M${cx},${cy} L${p1.x},${p1.y} A${r},${r},0,${lg},1,${p2.x},${p2.y}Z" fill="${color}" stroke="white" stroke-width="2.5"/>`;
-    return `<svg width="${FRAC_SVG}" height="${FRAC_SVG}" viewBox="0 0 ${FRAC_SVG} ${FRAC_SVG}" style="overflow:visible;display:block;">${path}${buildStackedLabels(lp.x, lp.y, labels, fs, textColor)}</svg>`;
-}
-
-// ─── FractionsView ────────────────────────────────────────────────────────────
-
-export class FractionsView {
+export class GeometryView {
     #engine;
-    #unsubscribe  = null;
-    #root         = null;
-    #workspace    = null;
+    #unsubscribe;
+    #root;
+    #els = {};
+    #shapeEls = new Map();
+    #threeStates = new Map();
+    #zCounter = 100;
+    #autoRotateCache = true;
+    #lastDimsForShape = new Map();
 
-    // Display state (kept in sync with engine)
-    #showDecimal  = false;
-    #showPercent  = false;
+    constructor(engine = new GeometryEngine()) { this.#engine = engine; }
+    get engine() { return this.#engine; }
 
-    // Drag state
-    #fracDrag        = null;
-    #zIndexCounter   = 100;
-
-    // Bound handler references kept for cleanup
-    #boundOnMove;
-    #boundOnUp;
-
-    constructor(engine) {
-        this.#engine      = engine;
-        this.#boundOnMove = (e) => this.#fracOnMove(e);
-        this.#boundOnUp   = (e) => this.#fracOnUp(e);
-    }
-
-    mount(parentEl) {
-        this.#root = this.#buildDOM();
-        parentEl.appendChild(this.#root);
-
-        // Global pointer handlers — catch drags that escape the workspace
-        document.addEventListener('pointermove',   this.#boundOnMove);
-        document.addEventListener('pointerup',     this.#boundOnUp);
-        document.addEventListener('pointercancel', this.#boundOnUp);
-
-        this.#unsubscribe = this.#engine.subscribe(opts => this.#onOptionsChange(opts));
+    mount(parent) {
+        this.#root = document.createElement('section');
+        this.#root.id = 'view-geometry';
+        this.#root.className = 'view-section flex-row h-full';
+        this.#root.innerHTML = this.#template();
+        parent.appendChild(this.#root);
+        this.#cacheRefs();
+        this.#wireEvents();
+        this.#unsubscribe = this.#engine.subscribe(reading => this.#render(reading));
         return this.#root;
     }
 
-    unmount() {
+    onEnter() {}
+    onLeave() {}
+    destroy() {
+        this.#disposeAllThree();
         this.#unsubscribe?.();
-        document.removeEventListener('pointermove',   this.#boundOnMove);
-        document.removeEventListener('pointerup',     this.#boundOnUp);
-        document.removeEventListener('pointercancel', this.#boundOnUp);
         this.#root?.remove();
-        this.#root      = null;
-        this.#workspace = null;
-        this.#fracDrag  = null;
     }
 
-    // ─── Engine subscription ─────────────────────────────────────────────────
+    #template() {
+        const btns2d = SHAPE_BUTTONS_2D.map(b => `
+            <button data-add-shape="${b.type}" data-shape-kind="2d" class="geo-btn">
+                <svg viewBox="0 0 40 40" width="28" height="28">${b.svg}</svg>${b.label}
+            </button>`).join('');
+        const btns3d = SHAPE_BUTTONS_3D.map(b => `
+            <button data-add-shape="${b.type}" data-shape-kind="3d" class="geo-btn">
+                <i class="fas ${b.iconClass} text-xl" style="color:${b.color}"></i>${b.label}
+            </button>`).join('');
 
-    #onOptionsChange({ showDecimal, showPercent }) {
-        this.#showDecimal = showDecimal;
-        this.#showPercent = showPercent;
-        this.#rerenderPieces();
+        return `
+        <div id="geometry-sidebar"
+             class="w-64 bg-soft-surface shadow-md z-10 p-4 flex flex-col gap-3
+                    overflow-y-auto border-r border-soft-border shrink-0">
+            <h3 class="font-bold text-xs uppercase tracking-wider text-soft-muted">2D-former</h3>
+            <div class="grid grid-cols-2 gap-1.5">${btns2d}</div>
+            <hr class="border-soft-border my-1"/>
+            <h3 class="font-bold text-xs uppercase tracking-wider text-soft-muted">3D-objekt</h3>
+            <div class="grid grid-cols-2 gap-1.5">${btns3d}</div>
+            <hr class="border-soft-border my-1"/>
+            <div class="flex gap-2">
+                <button data-action="rotate-ccw" class="flex-1 bg-soft-bg p-2 rounded text-soft-text hover:bg-[#eae8e3] text-sm border border-soft-border" title="Rotera moturs (2D)"><i class="fas fa-undo"></i></button>
+                <button data-action="rotate-cw"  class="flex-1 bg-soft-bg p-2 rounded text-soft-text hover:bg-[#eae8e3] text-sm border border-soft-border" title="Rotera medurs (2D)"><i class="fas fa-redo"></i></button>
+                <button data-action="delete" class="flex-1 bg-soft-pinkLight/20 text-soft-pink p-2 rounded hover:bg-soft-pinkLight/40 text-sm border border-soft-pinkLight/30" title="Ta bort markerad"><i class="fas fa-trash"></i></button>
+            </div>
+            <button data-action="toggle-spin"
+                    class="bg-soft-bg p-2 rounded-lg text-soft-text hover:bg-[#eae8e3]
+                           text-sm border border-soft-border flex items-center gap-2 w-full justify-center">
+                <i class="fas fa-sync-alt"></i>
+                <span data-role="spin-label">Rotation: PÅ</span>
+            </button>
+            <hr class="border-soft-border my-1"/>
+            <label class="flex items-center gap-2 font-semibold text-soft-text text-sm cursor-pointer select-none">
+                <input type="checkbox" data-role="show-formulas-cb" class="w-4 h-4 accent-soft-blue"/>
+                Visa formler
+            </label>
+            <div data-role="formula-panel" style="display:none;flex-direction:column;gap:6px;">
+                <div class="flex items-center gap-2">
+                    <span class="text-xs text-soft-muted font-semibold">Enhet:</span>
+                    <select data-role="unit-select" class="text-xs border border-soft-border rounded px-1 py-0.5 bg-white text-soft-text">
+                        <option value="mm">mm</option>
+                        <option value="cm" selected>cm</option>
+                        <option value="m">m</option>
+                    </select>
+                </div>
+                <div data-role="formula-area" class="bg-soft-bg rounded-xl p-3 border border-soft-border min-h-[56px]">
+                    <span style="color:#8c8d92;font-style:italic;font-size:11px;">
+                        Välj en form för att se formler.
+                    </span>
+                </div>
+            </div>
+            <div class="p-2.5 bg-soft-blueLight/15 rounded-xl text-xs text-soft-blue border border-soft-blueLight/30 leading-relaxed">
+                <i class="fas fa-search-plus mr-1"></i>
+                <strong>Dra ⌟-hörnet</strong> för att ändra storlek.<br/>
+                <i class="fas fa-hand-paper mr-1 mt-1"></i>
+                Dra på 3D-objektet för att vrida det.<br/>
+                <i class="fas fa-arrows-alt mr-1 mt-1"></i>
+                Dra i namnlistan för att flytta.
+            </div>
+            <button data-action="clear" class="bg-soft-text hover:bg-soft-muted text-white p-2 rounded mt-auto text-sm font-semibold">
+                Rensa allt
+            </button>
+        </div>
+        <div class="flex-1 workspace relative" data-role="workspace" id="workspace-geometry"></div>`;
     }
 
-    // ─── DOM construction ─────────────────────────────────────────────────────
-
-    #buildDOM() {
-        const section = document.createElement('section');
-        section.className = 'view-section flex h-full bg-soft-surface overflow-hidden';
-
-        // Left sidebar
-        section.appendChild(this.#buildSidebar());
-
-        // Main workspace area
-        const mainWrap = document.createElement('div');
-        mainWrap.className = 'flex-1 flex flex-col overflow-hidden';
-        mainWrap.appendChild(this.#buildWorkspaceTopBar());
-        mainWrap.appendChild(this.#buildWorkspace());
-        section.appendChild(mainWrap);
-
-        return section;
-    }
-
-    #buildSidebar() {
-        const aside = document.createElement('aside');
-        aside.className = 'w-56 shrink-0 flex flex-col bg-white border-r border-soft-border overflow-y-auto';
-
-        // Header
-        const hdr = document.createElement('div');
-        hdr.className = 'px-4 pt-4 pb-2 text-sm font-extrabold uppercase tracking-wider text-soft-muted';
-        hdr.textContent = 'Bråkbitar';
-        aside.appendChild(hdr);
-
-        // Fraction buttons container
-        const btnContainer = document.createElement('div');
-        btnContainer.className = 'flex-1 flex flex-col gap-1 px-2 pb-3';
-
-        FRAC_DEFS.forEach(f => {
-            const btn = document.createElement('button');
-            btn.className = 'flex items-center gap-3 w-full px-3 py-2.5 rounded-xl border border-soft-border bg-soft-bg hover:bg-white hover:shadow-sm transition-all text-left';
-            const ps = 28, pr = ps / 2 - 2;
-            let preview = '';
-            if (f.d === 1) {
-                preview = `<circle cx="${ps/2}" cy="${ps/2}" r="${pr}" fill="${f.color}"/>`;
-            } else {
-                const a = 360 / f.d;
-                preview = `<circle cx="${ps/2}" cy="${ps/2}" r="${pr}" fill="${f.color}" opacity="0.25"/>`;
-                for (let i = 0; i < f.d; i++) {
-                    const p1 = fracPolarXY(ps / 2, ps / 2, pr, i * a);
-                    const p2 = fracPolarXY(ps / 2, ps / 2, pr, (i + 1) * a);
-                    preview += `<path d="M${ps/2},${ps/2} L${p1.x},${p1.y} A${pr},${pr},0,${a > 180 ? 1 : 0},1,${p2.x},${p2.y}Z" fill="${f.color}" stroke="white" stroke-width="0.8"/>`;
-                }
-            }
-            btn.innerHTML = `
-                <svg width="${ps}" height="${ps}" viewBox="0 0 ${ps} ${ps}" class="shrink-0 drop-shadow-sm">${preview}</svg>
-                <div>
-                    <div class="text-sm font-bold text-soft-text">${f.label}</div>
-                    <div class="text-xs text-soft-muted">Klicka för att lägga till</div>
-                </div>`;
-            btn.addEventListener('click', () => this.#addFractionCircle(f.d, f.color));
-            btnContainer.appendChild(btn);
-        });
-        aside.appendChild(btnContainer);
-
-        // Display options
-        const optDiv = document.createElement('div');
-        optDiv.className = 'px-4 pt-3 pb-4 border-t border-soft-border space-y-2 shrink-0';
-        optDiv.innerHTML = `<div class="text-xs font-bold uppercase tracking-wider text-soft-muted mb-2">Visa också</div>`;
-
-        const decLbl = document.createElement('label');
-        decLbl.className = 'flex items-center gap-2 text-sm font-semibold text-soft-text cursor-pointer select-none';
-        const decCb  = document.createElement('input');
-        decCb.type   = 'checkbox';
-        decCb.className = 'w-4 h-4 accent-soft-blue';
-        decCb.addEventListener('change', () => this.#engine.setShowDecimal(decCb.checked));
-        decLbl.appendChild(decCb);
-        decLbl.appendChild(document.createTextNode('Decimaltal'));
-        optDiv.appendChild(decLbl);
-
-        const pctLbl = document.createElement('label');
-        pctLbl.className = 'flex items-center gap-2 text-sm font-semibold text-soft-text cursor-pointer select-none';
-        const pctCb  = document.createElement('input');
-        pctCb.type   = 'checkbox';
-        pctCb.className = 'w-4 h-4 accent-soft-blue';
-        pctCb.addEventListener('change', () => this.#engine.setShowPercent(pctCb.checked));
-        pctLbl.appendChild(pctCb);
-        pctLbl.appendChild(document.createTextNode('Procent'));
-        optDiv.appendChild(pctLbl);
-
-        aside.appendChild(optDiv);
-        return aside;
-    }
-
-    #buildWorkspaceTopBar() {
-        const bar = document.createElement('div');
-        bar.className = 'flex items-center gap-3 px-4 py-2 bg-white border-b border-soft-border shrink-0';
-
-        const clearBtn = document.createElement('button');
-        clearBtn.className = 'ml-auto px-4 py-1.5 bg-soft-redLight/20 text-soft-red font-bold rounded-full hover:bg-soft-redLight/40 transition-colors text-sm flex items-center gap-2';
-        clearBtn.innerHTML = '<i class="fas fa-trash-alt text-xs"></i>Rensa';
-        clearBtn.addEventListener('click', () => this.#clearWorkspace());
-        bar.appendChild(clearBtn);
-
-        return bar;
-    }
-
-    #buildWorkspace() {
-        const ws = document.createElement('div');
-        ws.className = 'flex-1 relative overflow-hidden bg-white';
-        ws.style.cssText = 'position:relative;overflow:hidden;';
-        this.#workspace = ws;
-        return ws;
-    }
-
-    // ─── Fraction piece creation ──────────────────────────────────────────────
-
-    #addFractionCircle(d, color) {
-        const ws  = this.#workspace;
-        const x   = ws.clientWidth  / 2 - FRAC_SVG * FRAC_BOARD_SCALE / 2 + (Math.random() * 80 - 40);
-        const y   = ws.clientHeight - FRAC_SVG * FRAC_BOARD_SCALE - 24      + (Math.random() * 30 - 15);
-
-        const wrapper = this.#makeFracElement(x, y);
-        wrapper.dataset.scale = FRAC_BOARD_SCALE;
-        wrapper.dataset.d     = d;
-        wrapper.dataset.color = color;
-        wrapper.innerHTML     = buildCircleSVG(d, color, this.#showDecimal, this.#showPercent);
-        ws.appendChild(wrapper);
-        this.#applyFracTransform(wrapper);
-        this.#addMoveHandle(wrapper);
-        this.#addResizeHandle(wrapper);
-
-        if (d === 1) {
-            this.#addFracDragListener(wrapper);
-        } else {
-            // Drag on non-slice area moves the whole circle
-            wrapper.addEventListener('pointerdown', (e) => {
-                if (e.button !== 0) return;
-                if (e.target.classList.contains('frac-slice')) return;
-                e.preventDefault();
-                e.stopPropagation();
-                this.#fracStartDrag(wrapper, e);
-            });
-            this.#attachSliceListeners(wrapper, d, color);
-        }
-    }
-
-    #makeFracElement(x, y) {
-        const el = document.createElement('div');
-        el.className  = 'frac-piece';
-        el.style.cssText = `position:absolute;left:${x}px;top:${y}px;width:${FRAC_SVG}px;height:${FRAC_SVG}px;cursor:grab;user-select:none;touch-action:none;filter:drop-shadow(0 4px 10px rgba(74,75,80,0.2));z-index:${++this.#zIndexCounter};transform-origin:top left;`;
-        el.dataset.x     = x;
-        el.dataset.y     = y;
-        el.dataset.scale = 1;
-        return el;
-    }
-
-    #applyFracTransform(el) {
-        const x = parseFloat(el.dataset.x)     || 0;
-        const y = parseFloat(el.dataset.y)     || 0;
-        const s = parseFloat(el.dataset.scale) || 1;
-        el.style.left            = x + 'px';
-        el.style.top             = y + 'px';
-        el.style.transform       = 'scale(' + s + ')';
-        el.style.transformOrigin = 'top left';
-    }
-
-    #addMoveHandle(el) {
-        const handle = document.createElement('div');
-        handle.style.cssText = 'position:absolute;top:-28px;left:50%;transform:translateX(-50%);height:22px;padding:0 12px;background:white;border:1.5px solid #c8c9ce;border-radius:8px;cursor:grab;display:flex;align-items:center;justify-content:center;font-size:14px;color:#6a6b70;user-select:none;touch-action:none;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,0.12);';
-        handle.setAttribute('role',       'button');
-        handle.setAttribute('aria-label', 'Flytta hela cirkeln');
-        handle.textContent = '\u28bf';
-        handle.title       = 'Dra för att flytta hela cirkeln';
-        handle.addEventListener('pointerdown', (e) => {
-            if (e.button !== 0) return;
-            e.preventDefault();
-            e.stopPropagation();
-            this.#fracStartDrag(el, e);
-        });
-        el.appendChild(handle);
-    }
-
-    #addResizeHandle(el) {
-        const handle = document.createElement('div');
-        handle.style.cssText = 'position:absolute;bottom:-4px;right:-4px;width:22px;height:22px;background:white;border:2px solid #8c8d92;border-radius:5px;cursor:nwse-resize;display:flex;align-items:center;justify-content:center;font-size:15px;color:#4a4b50;user-select:none;touch-action:none;z-index:10;opacity:0.9;font-weight:900;box-shadow:0 2px 6px rgba(0,0,0,0.15);';
-        handle.textContent = '\u231f';
-        handle.addEventListener('pointerdown', (e) => {
-            if (e.button !== 0) return;
-            e.preventDefault();
-            e.stopPropagation();
-            el.style.zIndex = ++this.#zIndexCounter;
-            this.#fracDrag = {
-                el, mode: 'resize',
-                startScale: parseFloat(el.dataset.scale) || 1,
-                sx: e.clientX, sy: e.clientY,
-                pointerId: e.pointerId,
-            };
-        });
-        el.appendChild(handle);
-    }
-
-    #addFracDragListener(el) {
-        el.addEventListener('pointerdown', (e) => {
-            if (e.button !== 0) return;
-            e.preventDefault();
-            e.stopPropagation();
-            this.#fracStartDrag(el, e);
-        });
-    }
-
-    #fracStartDrag(el, e) {
-        el.style.zIndex = ++this.#zIndexCounter;
-        el.style.cursor = 'grabbing';
-        this.#fracDrag = {
-            el, mode: 'move',
-            ox: parseFloat(el.dataset.x) || 0,
-            oy: parseFloat(el.dataset.y) || 0,
-            sx: e.clientX, sy: e.clientY,
-            pointerId: e.pointerId,
+    #cacheRefs() {
+        const $ = sel => this.#root.querySelector(sel);
+        this.#els = {
+            workspace:     $('[data-role="workspace"]'),
+            spinLabel:     $('[data-role="spin-label"]'),
+            showFormulas:  $('[data-role="show-formulas-cb"]'),
+            formulaPanel:  $('[data-role="formula-panel"]'),
+            unitSelect:    $('[data-role="unit-select"]'),
+            formulaArea:   $('[data-role="formula-area"]'),
         };
     }
 
-    #fracOnMove(e) {
-        if (!this.#fracDrag || this.#fracDrag.pointerId !== e.pointerId) return;
-        const drag = this.#fracDrag;
-        if (drag.mode === 'resize') {
-            const dx    = e.clientX - drag.sx;
-            const dy    = e.clientY - drag.sy;
-            const delta = Math.abs(dx) > Math.abs(dy) ? dx : dy;
-            const ns    = Math.max(0.4, Math.min(4, drag.startScale + delta / FRAC_SVG));
-            drag.el.dataset.scale = ns;
-            this.#applyFracTransform(drag.el);
+    #wireEvents() {
+        this.#root.addEventListener('click', evt => {
+            const addBtn = evt.target.closest('[data-add-shape]');
+            if (addBtn) {
+                const kind = addBtn.dataset.shapeKind;
+                const type = addBtn.dataset.addShape;
+                const ws = this.#els.workspace;
+                const wsW = ws.clientWidth, wsH = ws.clientHeight;
+                const sizeForKind = kind === '3d' ? CARD_3D_SIZE + CARD_3D_HEADER_H : SHAPE_SIZE_PX;
+                const x = (wsW / 2) - (sizeForKind / 2) + (Math.random() * 80 - 40);
+                const y = wsH - sizeForKind - 20 + (Math.random() * 30 - 15);
+                if (kind === '3d') {
+                    if (!window.THREE) { alert('Three.js är inte laddad.'); return; }
+                    this.#engine.add3DShape(type, Math.max(10, x), Math.max(10, y));
+                } else {
+                    this.#engine.add2DShape(type, Math.max(10, x), Math.max(10, y));
+                }
+                return;
+            }
+            const action = evt.target.closest('[data-action]')?.dataset.action;
+            if (action === 'rotate-ccw') this.#engine.rotateSelected(-15);
+            if (action === 'rotate-cw')  this.#engine.rotateSelected(15);
+            if (action === 'delete')     this.#engine.deleteSelected();
+            if (action === 'clear')      this.#engine.clear();
+            if (action === 'toggle-spin') this.#engine.toggleAutoRotate3D();
+        });
+        this.#els.workspace.addEventListener('pointerdown', evt => {
+            if (evt.target === this.#els.workspace) this.#engine.select(null);
+        });
+        this.#els.showFormulas.addEventListener('change', e =>
+            this.#engine.setShowFormulas(e.target.checked));
+        this.#els.unitSelect.addEventListener('change', e =>
+            this.#engine.setUnit(e.target.value));
+    }
+
+    #render(reading) {
+        this.#autoRotateCache = reading.autoRotate3D;
+        this.#els.spinLabel.textContent = `Rotation: ${reading.autoRotate3D ? 'PÅ' : 'AV'}`;
+        if (this.#els.showFormulas.checked !== reading.showFormulas) {
+            this.#els.showFormulas.checked = reading.showFormulas;
+        }
+        this.#els.formulaPanel.style.display = reading.showFormulas ? 'flex' : 'none';
+        if (this.#els.unitSelect.value !== reading.unit) {
+            this.#els.unitSelect.value = reading.unit;
+        }
+
+        const liveIds = new Set(reading.shapes.map(s => s.id));
+        for (const [id, el] of this.#shapeEls) {
+            if (!liveIds.has(id)) {
+                this.#disposeThreeFor(id);
+                el.remove();
+                this.#shapeEls.delete(id);
+                this.#lastDimsForShape.delete(id);
+            }
+        }
+        for (const shape of reading.shapes) {
+            let el = this.#shapeEls.get(shape.id);
+            if (!el) {
+                el = shape.kind === '3d'
+                    ? this.#create3DCardElement(shape)
+                    : this.#create2DShapeElement(shape);
+                this.#shapeEls.set(shape.id, el);
+                this.#els.workspace.appendChild(el);
+                this.#lastDimsForShape.set(shape.id, { ...shape.dimensions });
+            } else if (shape.kind === '2d' && MULTI_DIM_2D_SHAPES.includes(shape.type)) {
+                const prev = this.#lastDimsForShape.get(shape.id) || {};
+                const cur  = shape.dimensions || {};
+                const changed = Object.keys(cur).some(k => prev[k] !== cur[k]);
+                if (changed) {
+                    this.#redraw2DShape(el, shape);
+                    this.#lastDimsForShape.set(shape.id, { ...cur });
+                }
+            }
+            this.#applyTransform(el, shape);
+            el.classList.toggle('selected', shape.id === reading.selectedId);
+        }
+
+        if (reading.showFormulas) this.#renderFormulaPanel(reading);
+    }
+
+    #applyTransform(el, shape) {
+        el.style.left = shape.x + 'px';
+        el.style.top  = shape.y + 'px';
+        if (shape.kind === '3d') {
+            el.style.transform = `scale(${shape.scale})`;
         } else {
-            const nx = drag.ox + (e.clientX - drag.sx);
-            const ny = drag.oy + (e.clientY - drag.sy);
-            drag.el.dataset.x = nx;
-            drag.el.dataset.y = ny;
-            this.#applyFracTransform(drag.el);
+            el.style.transform = `rotate(${shape.rotation}deg) scale(${shape.scale})`;
         }
     }
 
-    #fracOnUp(e) {
-        if (!this.#fracDrag || this.#fracDrag.pointerId !== e.pointerId) return;
-        if (this.#fracDrag.mode !== 'resize') this.#fracDrag.el.style.cursor = 'grab';
-        this.#fracDrag = null;
+    #create2DShapeElement(shape) {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'draggable-item';
+        wrapper.dataset.shapeType = shape.type;
+        wrapper.dataset.shapeCat = '2d';
+        wrapper.dataset.id = String(shape.id);
+        wrapper.style.cssText =
+            `position:absolute;width:${SHAPE_SIZE_PX}px;height:${SHAPE_SIZE_PX}px;` +
+            `transform-origin:center center;`;
+        wrapper.innerHTML = this.#build2DSvg(shape);
+
+        const handle = document.createElement('div');
+        handle.className = 'geo-resize-handle';
+        handle.textContent = '⌟';
+        wrapper.appendChild(handle);
+
+        this.#wire2DShapeEvents(wrapper, shape.id, handle);
+        return wrapper;
     }
 
-    // ─── Slice pull-out ───────────────────────────────────────────────────────
+    #redraw2DShape(wrapper, shape) {
+        const oldSvg = wrapper.querySelector('svg');
+        if (oldSvg) oldSvg.remove();
+        const tmp = document.createElement('div');
+        tmp.innerHTML = this.#build2DSvg(shape);
+        const newSvg = tmp.querySelector('svg');
+        if (newSvg) {
+            const handle = wrapper.querySelector('.geo-resize-handle');
+            if (handle) wrapper.insertBefore(newSvg, handle);
+            else        wrapper.appendChild(newSvg);
+        }
+    }
 
-    #attachSliceListeners(wrapper, d, color) {
-        const slices = wrapper.querySelectorAll('.frac-slice');
-        slices.forEach((slice, i) => {
-            let sliceDownX, sliceDownY, pulled = false;
+    #build2DSvg(shape) {
+        return `<svg width="${SHAPE_SIZE_PX}" height="${SHAPE_SIZE_PX}" viewBox="0 0 ${SVG_VIEWBOX} ${SVG_VIEWBOX}">` +
+               shape2dSvg(shape.type, shape.dimensions) +
+               '</svg>';
+    }
 
-            slice.addEventListener('pointerdown', (e) => {
-                if (e.button !== 0) return;
-                e.preventDefault();
-                e.stopPropagation();
-                sliceDownX = e.clientX;
-                sliceDownY = e.clientY;
-                pulled     = false;
-
-                const onSliceMove = (ev) => {
-                    if (ev.pointerId !== e.pointerId) return;
-                    const dx   = ev.clientX - sliceDownX;
-                    const dy   = ev.clientY - sliceDownY;
-                    const dist = Math.sqrt(dx * dx + dy * dy);
-                    if (!pulled && dist > 10) {
-                        pulled = true;
-                        const looseEl = this.#spawnLooseSlice(d, i, color, ev.clientX, ev.clientY, parseFloat(wrapper.dataset.scale));
-                        this.#fracStartDrag(looseEl, ev);
-                    }
-                };
-
-                const onSliceUp = (ev) => {
-                    if (ev.pointerId !== e.pointerId) return;
-                    document.removeEventListener('pointermove',   onSliceMove);
-                    document.removeEventListener('pointerup',     onSliceUp);
-                    document.removeEventListener('pointercancel', onSliceUp);
-                    if (!pulled) this.#fracDrag = null;
-                };
-
-                document.addEventListener('pointermove',   onSliceMove);
-                document.addEventListener('pointerup',     onSliceUp);
-                document.addEventListener('pointercancel', onSliceUp);
-            });
+    #wire2DShapeEvents(wrapper, shapeId, handle) {
+        let dragging = false;
+        let pStartX = 0, pStartY = 0, sStartX = 0, sStartY = 0;
+        wrapper.addEventListener('pointerdown', e => {
+            if (e.target === handle) return;
+            if (e.button !== 0) return;
+            e.preventDefault();
+            const shape = this.#engine.getReading().shapes.find(s => s.id === shapeId);
+            if (!shape) return;
+            this.#engine.select(shapeId);
+            this.#zCounter += 1;
+            wrapper.style.zIndex = String(this.#zCounter);
+            dragging = true;
+            pStartX = e.clientX; pStartY = e.clientY;
+            sStartX = shape.x;   sStartY = shape.y;
+            wrapper.setPointerCapture(e.pointerId);
         });
+        wrapper.addEventListener('pointermove', e => {
+            if (!dragging) return;
+            this.#engine.setPosition(shapeId,
+                sStartX + (e.clientX - pStartX),
+                sStartY + (e.clientY - pStartY));
+        });
+        const endDrag = e => {
+            if (!dragging) return;
+            dragging = false;
+            try { wrapper.releasePointerCapture(e.pointerId); } catch {}
+        };
+        wrapper.addEventListener('pointerup', endDrag);
+        wrapper.addEventListener('pointercancel', endDrag);
+
+        let resizing = false, rStartX = 0, rStartScale = 1;
+        handle.addEventListener('pointerdown', e => {
+            if (e.button !== 0) return;
+            e.preventDefault();
+            e.stopPropagation();
+            const shape = this.#engine.getReading().shapes.find(s => s.id === shapeId);
+            if (!shape) return;
+            resizing = true;
+            rStartX = e.clientX;
+            rStartScale = shape.scale;
+            handle.setPointerCapture(e.pointerId);
+        });
+        handle.addEventListener('pointermove', e => {
+            if (!resizing) return;
+            this.#engine.setScale(shapeId,
+                rStartScale + (e.clientX - rStartX) / SHAPE_SIZE_PX);
+        });
+        const endResize = e => {
+            if (!resizing) return;
+            resizing = false;
+            try { handle.releasePointerCapture(e.pointerId); } catch {}
+        };
+        handle.addEventListener('pointerup', endResize);
+        handle.addEventListener('pointercancel', endResize);
     }
 
-    #spawnLooseSlice(d, sliceIndex, color, clientX, clientY, scale) {
-        const ws     = this.#workspace;
-        const wsRect = ws.getBoundingClientRect();
-        const s      = scale || 1;
-        const nx     = clientX - wsRect.left - FRAC_SVG * s / 2;
-        const ny     = clientY - wsRect.top  - FRAC_SVG * s / 2;
-
-        const el = this.#makeFracElement(nx, ny);
-        el.dataset.scale      = s;
-        el.dataset.isLoose    = 'true';
-        el.dataset.looseD     = d;
-        el.dataset.looseSlice = sliceIndex;
-        el.dataset.looseColor = color;
-        el.innerHTML          = buildLooseSliceSVG(d, sliceIndex, color, this.#showDecimal, this.#showPercent);
-        ws.appendChild(el);
-        this.#applyFracTransform(el);
-        this.#addFracDragListener(el);
-        this.#addResizeHandle(el);
-        return el;
+    #create3DCardElement(shape) {
+        const card = document.createElement('div');
+        card.className = 'geo-3d-card draggable-item';
+        card.dataset.shapeType = shape.type;
+        card.dataset.shapeCat = '3d';
+        card.dataset.id = String(shape.id);
+        card.style.cssText =
+            `position:absolute;width:${CARD_3D_SIZE}px;` +
+            `height:${CARD_3D_SIZE + CARD_3D_HEADER_H}px;` +
+            `transform-origin:top left;`;
+        const header = document.createElement('div');
+        header.style.cssText =
+            `width:100%;height:${CARD_3D_HEADER_H}px;display:flex;` +
+            `align-items:center;justify-content:center;font-size:10px;` +
+            `font-weight:700;color:#6a6b70;user-select:none;cursor:move;` +
+            `background:rgba(100,110,130,0.12);border-radius:10px 10px 0 0;`;
+        header.textContent = `⠿ ${TYPE_LABELS_3D[shape.type] || shape.type}`;
+        card.appendChild(header);
+        const threeState = this.#initThreeScene(card, shape.type, CARD_3D_SIZE);
+        if (threeState) this.#threeStates.set(shape.id, threeState);
+        const overlay = document.createElement('div');
+        overlay.style.cssText =
+            `position:absolute;top:${CARD_3D_HEADER_H}px;left:0;` +
+            `width:100%;height:${CARD_3D_SIZE}px;z-index:5;cursor:grab;`;
+        card.appendChild(overlay);
+        const handle = document.createElement('div');
+        handle.className = 'geo-resize-handle';
+        handle.textContent = '⌟';
+        card.appendChild(handle);
+        this.#wire3DCardEvents(card, shape.id, header, overlay, handle, threeState);
+        return card;
     }
 
-    // ─── Re-render on display-option change ──────────────────────────────────
+    #wire3DCardEvents(card, shapeId, header, overlay, handle, threeState) {
+        let dragging = false;
+        let pStartX = 0, pStartY = 0, sStartX = 0, sStartY = 0;
+        header.addEventListener('pointerdown', e => {
+            if (e.button !== 0) return;
+            e.preventDefault();
+            const shape = this.#engine.getReading().shapes.find(s => s.id === shapeId);
+            if (!shape) return;
+            this.#engine.select(shapeId);
+            this.#zCounter += 1;
+            card.style.zIndex = String(this.#zCounter);
+            dragging = true;
+            pStartX = e.clientX; pStartY = e.clientY;
+            sStartX = shape.x;   sStartY = shape.y;
+            header.setPointerCapture(e.pointerId);
+        });
+        header.addEventListener('pointermove', e => {
+            if (!dragging) return;
+            this.#engine.setPosition(shapeId,
+                sStartX + (e.clientX - pStartX),
+                sStartY + (e.clientY - pStartY));
+        });
+        const endDrag = e => {
+            if (!dragging) return;
+            dragging = false;
+            try { header.releasePointerCapture(e.pointerId); } catch {}
+        };
+        header.addEventListener('pointerup', endDrag);
+        header.addEventListener('pointercancel', endDrag);
 
-    #rerenderPieces() {
-        if (!this.#workspace) return;
-        this.#workspace.querySelectorAll('.frac-piece').forEach(el => {
-            const d     = parseInt(el.dataset.d);
-            const color = el.dataset.color;
+        let rotating = false, prevX = 0, prevY = 0;
+        overlay.addEventListener('pointerdown', e => {
+            if (e.button !== 0) return;
+            e.preventDefault();
+            e.stopPropagation();
+            this.#engine.select(shapeId);
+            this.#zCounter += 1;
+            card.style.zIndex = String(this.#zCounter);
+            overlay.setPointerCapture(e.pointerId);
+            rotating = true;
+            if (threeState) threeState.manualRotating = true;
+            prevX = e.clientX; prevY = e.clientY;
+            overlay.style.cursor = 'grabbing';
+        });
+        overlay.addEventListener('pointermove', e => {
+            if (!rotating || !threeState) return;
+            const dx = e.clientX - prevX, dy = e.clientY - prevY;
+            threeState.mesh.rotation.y += dx * 0.01;
+            threeState.mesh.rotation.x += dy * 0.01;
+            prevX = e.clientX; prevY = e.clientY;
+        });
+        const endRotate = e => {
+            if (!rotating) return;
+            rotating = false;
+            if (threeState) threeState.manualRotating = false;
+            overlay.style.cursor = 'grab';
+            try { overlay.releasePointerCapture(e.pointerId); } catch {}
+        };
+        overlay.addEventListener('pointerup', endRotate);
+        overlay.addEventListener('pointercancel', endRotate);
 
-            if (d && color) {
-                // Full circle
-                const oldSvg = el.querySelector('svg');
-                if (oldSvg) {
-                    const tmp = document.createElement('div');
-                    tmp.innerHTML = buildCircleSVG(d, color, this.#showDecimal, this.#showPercent);
-                    oldSvg.replaceWith(tmp.firstElementChild);
-                    if (d > 1) this.#attachSliceListeners(el, d, color);
-                }
-            } else if (el.dataset.isLoose === 'true') {
-                // Loose slice
-                const ld     = parseInt(el.dataset.looseD);
-                const li     = parseInt(el.dataset.looseSlice);
-                const lcolor = el.dataset.looseColor;
-                if (!isNaN(ld) && !isNaN(li) && lcolor) {
-                    const oldSvg = el.querySelector('svg');
-                    if (oldSvg) {
-                        const tmp = document.createElement('div');
-                        tmp.innerHTML = buildLooseSliceSVG(ld, li, lcolor, this.#showDecimal, this.#showPercent);
-                        oldSvg.replaceWith(tmp.firstElementChild);
-                    }
+        let resizing = false, rStartX = 0, rStartScale = 1;
+        handle.addEventListener('pointerdown', e => {
+            if (e.button !== 0) return;
+            e.preventDefault();
+            e.stopPropagation();
+            const shape = this.#engine.getReading().shapes.find(s => s.id === shapeId);
+            if (!shape) return;
+            resizing = true;
+            rStartX = e.clientX;
+            rStartScale = shape.scale;
+            handle.setPointerCapture(e.pointerId);
+        });
+        handle.addEventListener('pointermove', e => {
+            if (!resizing) return;
+            this.#engine.setScale(shapeId,
+                rStartScale + (e.clientX - rStartX) / CARD_3D_SIZE);
+        });
+        const endResize = e => {
+            if (!resizing) return;
+            resizing = false;
+            try { handle.releasePointerCapture(e.pointerId); } catch {}
+        };
+        handle.addEventListener('pointerup', endResize);
+        handle.addEventListener('pointercancel', endResize);
+    }
+
+    #initThreeScene(card, type, size) {
+        const THREE = window.THREE;
+        if (!THREE) return null;
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 1000);
+        camera.position.z = 5;
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(size, size);
+        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.setClearColor(0x000000, 0);
+        const canvas = renderer.domElement;
+        canvas.style.cssText = `display:block;width:${size}px;height:${size}px;pointer-events:none;`;
+        card.appendChild(canvas);
+        scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+        const dl = new THREE.DirectionalLight(0xffffff, 0.8);
+        dl.position.set(5,5,5); scene.add(dl);
+        const dl2 = new THREE.DirectionalLight(0xffffff, 0.3);
+        dl2.position.set(-5,-3,5); scene.add(dl2);
+        const shapeMap = {
+            cube:     [new THREE.BoxGeometry(2,2,2),         0x4f7c75, false],
+            cuboid:   [new THREE.BoxGeometry(2.8,1.8,1.6),   0x5b80a5, false],
+            sphere:   [new THREE.SphereGeometry(1.5,32,32),  0xa85c72, false],
+            pyramid:  [new THREE.ConeGeometry(1.5,2,4),      0xdec894, true],
+            cylinder: [new THREE.CylinderGeometry(1,1,2.5,32), 0x5b80a5, false],
+            cone:     [new THREE.ConeGeometry(1,2.5,32),     0x938db3, false],
+        };
+        const [geo, color, flat] = shapeMap[type] || shapeMap.cube;
+        const mat = new THREE.MeshPhongMaterial({
+            color, flatShading: flat,
+            polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,
+        });
+        const mesh = new THREE.Mesh(geo, mat);
+        if (type === 'cube' || type === 'cuboid' || type === 'pyramid') {
+            mesh.add(new THREE.LineSegments(
+                new THREE.EdgesGeometry(geo),
+                new THREE.LineBasicMaterial({ color:0x333333, transparent:true, opacity:0.6 })));
+        }
+        mesh.rotation.x = 0.4; mesh.rotation.y = 0.5;
+        scene.add(mesh);
+        const state = { scene, camera, renderer, mesh, canvas, geo, mat,
+                        animId: null, manualRotating: false, type };
+        const view = this;
+        function animate() {
+            state.animId = requestAnimationFrame(animate);
+            if (view.#autoRotateCache && !state.manualRotating) {
+                mesh.rotation.y += 0.006; mesh.rotation.x += 0.002;
+            }
+            renderer.render(scene, camera);
+        }
+        animate();
+        return state;
+    }
+
+    #disposeThreeFor(shapeId) {
+        const state = this.#threeStates.get(shapeId);
+        if (!state) return;
+        if (state.animId) cancelAnimationFrame(state.animId);
+        try { state.geo?.dispose(); } catch {}
+        try { state.mat?.dispose(); } catch {}
+        try { state.renderer?.dispose(); } catch {}
+        if (state.canvas && state.canvas.parentNode) {
+            state.canvas.parentNode.removeChild(state.canvas);
+        }
+        this.#threeStates.delete(shapeId);
+    }
+
+    #disposeAllThree() {
+        for (const id of [...this.#threeStates.keys()]) this.#disposeThreeFor(id);
+    }
+
+    #renderFormulaPanel(reading) {
+        const area = this.#els.formulaArea;
+        const selected = reading.selectedId == null
+            ? null
+            : reading.shapes.find(s => s.id === reading.selectedId);
+        area.innerHTML = '';
+        if (!selected) {
+            area.innerHTML = '<span style="color:#8c8d92;font-style:italic;font-size:11px;">Välj en form för att se formler.</span>';
+            return;
+        }
+        const spec = getFormulaSpec(selected, reading.unit);
+        if (!spec.hasContent) {
+            area.innerHTML = '<span style="color:#8c8d92;font-style:italic;font-size:11px;">Inga formler tillgängliga.</span>';
+            return;
+        }
+        for (const row of spec.rows) {
+            const rowEl = document.createElement('div');
+            rowEl.className = 'calcGeo_row';
+            const lbl = document.createElement('div');
+            lbl.className = 'calcGeo_lbl';
+            lbl.textContent = row.label;
+            rowEl.appendChild(lbl);
+            const line = document.createElement('div');
+            line.className = 'calcGeo_line';
+            for (const part of row.parts) {
+                if (part.type === 'text') {
+                    line.appendChild(document.createTextNode(part.value));
+                } else if (part.type === 'var') {
+                    const span = document.createElement('span');
+                    span.className = 'calcGeo_var';
+                    span.textContent = part.text;
+                    span.style.color = part.color || '#5b80a5';
+                    span.dataset.dimKey = part.key;
+                    span.addEventListener('mouseenter', () => {
+                        span.style.color = '#dc2626';
+                        this.#highlightDim(selected.id, part.key, true);
+                    });
+                    span.addEventListener('mouseleave', () => {
+                        span.style.color = part.color || '#5b80a5';
+                        this.#highlightDim(selected.id, part.key, false);
+                    });
+                    line.appendChild(span);
                 }
             }
-        });
+            rowEl.appendChild(line);
+            area.appendChild(rowEl);
+        }
+        if (spec.inputs.length > 0) {
+            const inpRow = document.createElement('div');
+            inpRow.className = 'calcGeo_inprow';
+            for (const inp of spec.inputs) {
+                const lblEl = document.createElement('span');
+                lblEl.className = 'calcGeo_dimLbl';
+                lblEl.textContent = inp.label;
+                inpRow.appendChild(lblEl);
+                const input = document.createElement('input');
+                input.type = 'number';
+                input.value = inp.value;
+                input.min = '0.01';
+                input.step = '0.1';
+                input.className = 'calcGeo_inp';
+                input.title = reading.unit;
+                input.addEventListener('change', () => {
+                    const raw = parseFloat(input.value);
+                    if (!Number.isFinite(raw) || raw <= 0) return;
+                    let vcm = unitToCm(raw, reading.unit);
+                    if (inp.specialKey === 'd_circle') vcm = vcm / 2;
+                    this.#engine.setDimension(selected.id, inp.key, vcm);
+                });
+                inpRow.appendChild(input);
+            }
+            area.appendChild(inpRow);
+        }
     }
 
-    // ─── Clear workspace ─────────────────────────────────────────────────────
+    #highlightDim(shapeId, dimKey, on) {
+        const wrapper = this.#shapeEls.get(shapeId);
+        if (!wrapper) return;
+        const svg = wrapper.querySelector('svg');
+        if (!svg) return;
+        const dimLine = svg.querySelector(`[data-dim="${dimKey}"]`);
+        if (dimLine) {
+            dimLine.style.stroke = on ? '#dc2626' : '';
+            dimLine.style.strokeWidth = on ? '5' : '';
+            return;
+        }
+        const shapeEl = svg.querySelector('circle, rect, polygon');
+        if (!shapeEl) return;
+        if (on) {
+            if (!shapeEl.dataset.origStroke)
+                shapeEl.dataset.origStroke = shapeEl.getAttribute('stroke') || '#000000';
+            shapeEl.setAttribute('stroke', '#dc2626');
+            shapeEl.setAttribute('stroke-width', '5');
+        } else {
+            if (shapeEl.dataset.origStroke)
+                shapeEl.setAttribute('stroke', shapeEl.dataset.origStroke);
+            shapeEl.setAttribute('stroke-width', '2');
+        }
+    }
+}
 
-    #clearWorkspace() {
-        if (!this.#workspace) return;
-        this.#workspace.querySelectorAll('.frac-piece').forEach(el => el.remove());
-        this.#fracDrag = null;
+function shape2dSvg(type, dimensions) {
+    const dl = (dim, x1, y1, x2, y2) =>
+        `<line data-dim="${dim}" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="transparent" stroke-width="2"/>`;
+    switch (type) {
+        case 'square':
+            return `<rect x="10" y="10" width="100" height="100" fill="#ffffff" stroke="#000000" stroke-width="2"/>` +
+                   dl('a', 10, 115, 110, 115);
+        case 'circle':
+            return `<circle cx="60" cy="60" r="50" fill="#ffffff" stroke="#000000" stroke-width="2"/>` +
+                   dl('r', 60, 60, 110, 60);
+        case 'triangle': {
+            const b = (dimensions?.b || 10), h = (dimensions?.h || 9);
+            const bU = Math.min(110, b * 10);
+            const hU = Math.min(110, h * 10);
+            const baseY = 10 + hU;
+            const x1 = 60 - bU / 2;
+            const x2 = 60 + bU / 2;
+            return `<polygon points="60,10 ${x2},${baseY} ${x1},${baseY}" fill="#ffffff" stroke="#000000" stroke-width="2" stroke-linejoin="round"/>` +
+                   dl('b', x1, baseY, x2, baseY) +
+                   dl('h', 60, 10, 60, baseY);
+        }
+        case 'rectangle': {
+            const b = (dimensions?.b || 11), h = (dimensions?.h || 7);
+            const bU = Math.min(110, b * 10);
+            const hU = Math.min(90, h * 10);
+            const x = 60 - bU / 2;
+            const y = 60 - hU / 2;
+            return `<rect x="${x}" y="${y}" width="${bU}" height="${hU}" fill="#ffffff" stroke="#000000" stroke-width="2"/>` +
+                   dl('b', x, y + hU + 5, x + bU, y + hU + 5) +
+                   dl('h', x - 5, y, x - 5, y + hU);
+        }
+        case 'pentagon': {
+            const pts = Array.from({ length: 5 }, (_, i) => {
+                const a = (i * 72 - 90) * Math.PI / 180;
+                return `${(60 + 50 * Math.cos(a)).toFixed(1)},${(60 + 50 * Math.sin(a)).toFixed(1)}`;
+            }).join(' ');
+            const p0x = 60 + 50 * Math.cos(-90 * Math.PI / 180);
+            const p0y = 60 + 50 * Math.sin(-90 * Math.PI / 180);
+            const p1x = 60 + 50 * Math.cos(-18 * Math.PI / 180);
+            const p1y = 60 + 50 * Math.sin(-18 * Math.PI / 180);
+            return `<polygon points="${pts}" fill="#ffffff" stroke="#000000" stroke-width="2"/>` +
+                   dl('a', p0x.toFixed(1), p0y.toFixed(1), p1x.toFixed(1), p1y.toFixed(1));
+        }
+        case 'hexagon': {
+            const pts = Array.from({ length: 6 }, (_, i) => {
+                const a = (i * 60 - 90) * Math.PI / 180;
+                return `${(60 + 50 * Math.cos(a)).toFixed(1)},${(60 + 50 * Math.sin(a)).toFixed(1)}`;
+            }).join(' ');
+            const q0x = 60 + 50 * Math.cos(-90 * Math.PI / 180);
+            const q0y = 60 + 50 * Math.sin(-90 * Math.PI / 180);
+            const q1x = 60 + 50 * Math.cos(-30 * Math.PI / 180);
+            const q1y = 60 + 50 * Math.sin(-30 * Math.PI / 180);
+            return `<polygon points="${pts}" fill="#ffffff" stroke="#000000" stroke-width="2"/>` +
+                   dl('a', q0x.toFixed(1), q0y.toFixed(1), q1x.toFixed(1), q1y.toFixed(1));
+        }
+        case 'rhombus': {
+            const d1 = (dimensions?.d1 || 10.4), d2 = (dimensions?.d2 || 10);
+            const d1U = Math.min(110, d1 * 10);
+            const d2U = Math.min(110, d2 * 10);
+            const top    = 60 - d1U / 2;
+            const bot    = 60 + d1U / 2;
+            const left   = 60 - d2U / 2;
+            const right  = 60 + d2U / 2;
+            return `<polygon points="60,${top} ${right},60 60,${bot} ${left},60" fill="#ffffff" stroke="#000000" stroke-width="2"/>` +
+                   dl('d1', 60, top, 60, bot) +
+                   dl('d2', left, 60, right, 60);
+        }
+        case 'parallelogram': {
+            const b = (dimensions?.b || 9), h = (dimensions?.h || 8);
+            const bU = Math.min(95, b * 10);
+            const hU = Math.min(85, h * 10);
+            const slant = bU * 0.2;
+            const yTop = 60 - hU / 2;
+            const yBot = 60 + hU / 2;
+            const xTL = 60 - bU / 2 + slant;
+            const xTR = xTL + bU;
+            const xBL = xTL - slant * 2;
+            const xBR = xTR - slant * 2;
+            return `<polygon points="${xBL},${yBot} ${xTL},${yTop} ${xTR},${yTop} ${xBR},${yBot}" fill="#ffffff" stroke="#000000" stroke-width="2"/>` +
+                   dl('b', xBL, yBot + 5, xBR, yBot + 5) +
+                   dl('h', xTR + 5, yTop, xTR + 5, yBot);
+        }
+        default:
+            return '';
     }
 }
