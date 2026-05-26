@@ -1,7 +1,9 @@
 // ═══════════════════════════════════════════════════════════════════════════
 // modules/tools/GeometryEngine.js
-// Stage 2 — adds 3D objects + auto-rotate flag.
+// Stage 3 — adds per-shape dimensions, showFormulas flag, unit.
 // ═══════════════════════════════════════════════════════════════════════════
+
+import { DEFAULT_DIMS_CM, MULTI_DIM_2D_SHAPES } from './GeometryFormulas.js';
 
 export const SHAPE_DEFS_2D = Object.freeze({
     circle:        { label: 'Cirkel',        dims: ['r'] },
@@ -30,6 +32,7 @@ const MIN_SCALE_2D = 0.3;
 const MAX_SCALE_2D = 5;
 const MIN_SCALE_3D = 0.4;
 const MAX_SCALE_3D = 4;
+const VALID_UNITS = Object.freeze(['mm', 'cm', 'm']);
 
 let nextId = 1;
 
@@ -37,6 +40,8 @@ export class GeometryEngine {
     #shapes = [];
     #selectedId = null;
     #autoRotate3D = true;
+    #showFormulas = false;
+    #unit = 'cm';
     #listeners = new Set();
 
     add2DShape(type, x = 100, y = 100) {
@@ -50,14 +55,11 @@ export class GeometryEngine {
     }
 
     #addShape({ kind, type, x, y }) {
+        const defaults = DEFAULT_DIMS_CM[type] || {};
         const shape = {
-            id: nextId++,
-            kind,
-            type,
-            x,
-            y,
-            rotation: 0,
-            scale: 1,
+            id: nextId++, kind, type, x, y,
+            rotation: 0, scale: 1,
+            dimensions: { ...defaults },
         };
         this.#shapes.push(shape);
         this.#selectedId = shape.id;
@@ -68,8 +70,7 @@ export class GeometryEngine {
     setPosition(id, x, y) {
         const s = this.#findById(id);
         if (!s) return;
-        s.x = x;
-        s.y = y;
+        s.x = x; s.y = y;
         this.#emit();
     }
 
@@ -79,7 +80,18 @@ export class GeometryEngine {
         const [lo, hi] = s.kind === '3d'
             ? [MIN_SCALE_3D, MAX_SCALE_3D]
             : [MIN_SCALE_2D, MAX_SCALE_2D];
-        s.scale = Math.max(lo, Math.min(hi, scale));
+        const oldScale = s.scale;
+        const newScale = Math.max(lo, Math.min(hi, scale));
+        s.scale = newScale;
+        const isMultiDim2D = s.kind === '2d' && MULTI_DIM_2D_SHAPES.includes(s.type);
+        if (!isMultiDim2D && oldScale > 0 && newScale !== oldScale) {
+            const ratio = newScale / oldScale;
+            const updated = {};
+            for (const [k, v] of Object.entries(s.dimensions)) {
+                updated[k] = v * ratio;
+            }
+            s.dimensions = updated;
+        }
         this.#emit();
     }
 
@@ -87,6 +99,31 @@ export class GeometryEngine {
         const s = this.#findById(id);
         if (!s) return;
         s.rotation = deg;
+        this.#emit();
+    }
+
+    setDimension(id, key, valueCm) {
+        const s = this.#findById(id);
+        if (!s) return;
+        const v = Number(valueCm);
+        if (!Number.isFinite(v) || v <= 0) return;
+        if (!(key in s.dimensions)) return;
+        const isMultiDim2D = s.kind === '2d' && MULTI_DIM_2D_SHAPES.includes(s.type);
+        if (isMultiDim2D) {
+            s.dimensions = { ...s.dimensions, [key]: v };
+        } else {
+            const defaults = DEFAULT_DIMS_CM[s.type] || {};
+            const baseVal = defaults[key];
+            if (!baseVal || baseVal <= 0) return;
+            const newScale = Math.max(0.05, Math.min(20, v / baseVal));
+            const ratio = newScale / (s.scale || 1);
+            s.scale = newScale;
+            const updated = {};
+            for (const [k, val] of Object.entries(s.dimensions)) {
+                updated[k] = k === key ? v : val * ratio;
+            }
+            s.dimensions = updated;
+        }
         this.#emit();
     }
 
@@ -134,17 +171,36 @@ export class GeometryEngine {
         this.#emit();
     }
 
+    setShowFormulas(on) {
+        const v = !!on;
+        if (this.#showFormulas === v) return;
+        this.#showFormulas = v;
+        this.#emit();
+    }
+
+    setUnit(unit) {
+        if (!VALID_UNITS.includes(unit)) return;
+        if (this.#unit === unit) return;
+        this.#unit = unit;
+        this.#emit();
+    }
+
     getReading() {
         const selected = this.#selectedId == null
             ? null
             : this.#findById(this.#selectedId);
         return Object.freeze({
-            shapes:       Object.freeze(this.#shapes.map(s => ({ ...s }))),
+            shapes:       Object.freeze(this.#shapes.map(s => ({
+                ...s,
+                dimensions: { ...s.dimensions },
+            }))),
             selectedId:   this.#selectedId,
             selectedType: selected ? selected.type : null,
             selectedKind: selected ? selected.kind : null,
             hasSelection: selected != null,
             autoRotate3D: this.#autoRotate3D,
+            showFormulas: this.#showFormulas,
+            unit:         this.#unit,
         });
     }
 
