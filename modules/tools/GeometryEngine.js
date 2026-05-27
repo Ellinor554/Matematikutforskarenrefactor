@@ -210,8 +210,9 @@ setPresentationOpen(on) {
             selectedKind: selected ? selected.kind : null,
             hasSelection: selected != null,
             autoRotate3D: this.#autoRotate3D,
-            showFormulas: this.#showFormulas,
+           showFormulas: this.#showFormulas,
             unit:         this.#unit,
+            presentationOpen: this.#presentationOpen,
         });
     }
 
