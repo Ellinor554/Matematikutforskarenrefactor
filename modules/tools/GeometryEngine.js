@@ -185,7 +185,17 @@ export class GeometryEngine {
         this.#unit = unit;
         this.#emit();
     }
+setPresentationOpen(on) {
+        const v = !!on;
+        if (this.#presentationOpen === v) return;
+        this.#presentationOpen = v;
+        this.#emit();
+    }
 
+    togglePresentationOpen() {
+        this.#presentationOpen = !this.#presentationOpen;
+        this.#emit();
+    }
     getReading() {
         const selected = this.#selectedId == null
             ? null
