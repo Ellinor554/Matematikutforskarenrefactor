@@ -1,7 +1,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 // modules/tools/GeometryView.js
-// Stage 3 — adds Visa formler checkbox, unit dropdown, live formula panel
-// with hover-highlighting. Multi-dim 2D shapes redraw SVG on dim change.
+// Stage 4 — adds Presentationsläge overlay (floats in top-right of viewport,
+// renders the selected shape's formulas at large size for projection).
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { GeometryEngine, SHAPE_DEFS_2D, SHAPE_DEFS_3D } from './GeometryEngine.js';
@@ -42,6 +42,7 @@ const SHAPE_SIZE_PX = 200;
 const SVG_VIEWBOX  = 120;
 const CARD_3D_SIZE = 240;
 const CARD_3D_HEADER_H = 24;
+const PRES_OVERLAY_ID = 'geometry-presentation-overlay';
 
 const TYPE_LABELS_3D = {
     cylinder: 'Cylinder', cube: 'Kub', cuboid: 'Rätblock',
@@ -58,6 +59,7 @@ export class GeometryView {
     #zCounter = 100;
     #autoRotateCache = true;
     #lastDimsForShape = new Map();
+    #presentationEl = null;
 
     constructor(engine = new GeometryEngine()) { this.#engine = engine; }
     get engine() { return this.#engine; }
@@ -74,9 +76,14 @@ export class GeometryView {
         return this.#root;
     }
 
-    onEnter() {}
-    onLeave() {}
+    onEnter() {
+        if (this.#engine.getReading().presentationOpen) this.#showPresentation();
+    }
+    onLeave() {
+        this.#hidePresentation();
+    }
     destroy() {
+        this.#removePresentationOverlay();
         this.#disposeAllThree();
         this.#unsubscribe?.();
         this.#root?.remove();
@@ -132,6 +139,13 @@ export class GeometryView {
                         Välj en form för att se formler.
                     </span>
                 </div>
+                <button data-action="toggle-presentation"
+                        class="w-full bg-soft-blueLight/20 text-soft-blue border border-soft-blueLight/30
+                               rounded-lg px-2 py-1 text-xs font-bold hover:bg-soft-blueLight/40
+                               transition-colors flex items-center justify-center gap-1">
+                    <i class="fas fa-expand-alt text-xs" data-role="pres-btn-icon"></i>
+                    <span data-role="pres-btn-label">Expandera formel</span>
+                </button>
             </div>
             <div class="p-2.5 bg-soft-blueLight/15 rounded-xl text-xs text-soft-blue border border-soft-blueLight/30 leading-relaxed">
                 <i class="fas fa-search-plus mr-1"></i>
@@ -157,6 +171,8 @@ export class GeometryView {
             formulaPanel:  $('[data-role="formula-panel"]'),
             unitSelect:    $('[data-role="unit-select"]'),
             formulaArea:   $('[data-role="formula-area"]'),
+            presBtnIcon:   $('[data-role="pres-btn-icon"]'),
+            presBtnLabel:  $('[data-role="pres-btn-label"]'),
         };
     }
 
@@ -185,6 +201,7 @@ export class GeometryView {
             if (action === 'delete')     this.#engine.deleteSelected();
             if (action === 'clear')      this.#engine.clear();
             if (action === 'toggle-spin') this.#engine.toggleAutoRotate3D();
+            if (action === 'toggle-presentation') this.#engine.togglePresentationOpen();
         });
         this.#els.workspace.addEventListener('pointerdown', evt => {
             if (evt.target === this.#els.workspace) this.#engine.select(null);
@@ -238,6 +255,15 @@ export class GeometryView {
         }
 
         if (reading.showFormulas) this.#renderFormulaPanel(reading);
+
+        // Stage 4: keep presentation overlay in sync
+        this.#syncPresentationButtonLabel(reading.presentationOpen);
+        if (reading.presentationOpen) {
+            this.#showPresentation();
+            this.#renderPresentationContent(reading);
+        } else {
+            this.#hidePresentation();
+        }
     }
 
     #applyTransform(el, shape) {
@@ -633,6 +659,104 @@ export class GeometryView {
             if (shapeEl.dataset.origStroke)
                 shapeEl.setAttribute('stroke', shapeEl.dataset.origStroke);
             shapeEl.setAttribute('stroke-width', '2');
+        }
+    }
+
+    // ─── Stage 4: presentation overlay ──────────────────────────────────
+
+    #showPresentation() {
+        if (this.#presentationEl) return;
+        const el = document.createElement('div');
+        el.id = PRES_OVERLAY_ID;
+        el.style.cssText =
+            'position:fixed;top:16px;right:16px;z-index:9000;background:#fff;' +
+            'border:3px solid #5b80a5;border-radius:16px;padding:24px 28px 18px;' +
+            'min-width:300px;max-width:520px;box-shadow:0 8px 36px rgba(0,0,0,0.20);';
+        el.innerHTML =
+            '<button data-role="pres-close" style="position:absolute;top:10px;right:14px;' +
+            'background:none;border:none;font-size:22px;cursor:pointer;color:#8c8d92;' +
+            'line-height:1;" title="Stäng">✕</button>' +
+            '<div style="font-size:11px;font-weight:800;color:#5b80a5;text-transform:uppercase;' +
+            'letter-spacing:.08em;margin-bottom:14px;">📐 Presentationsläge</div>' +
+            '<div data-role="pres-content"></div>';
+        document.body.appendChild(el);
+        this.#presentationEl = el;
+        el.querySelector('[data-role="pres-close"]').addEventListener('click', () => {
+            this.#engine.setPresentationOpen(false);
+        });
+    }
+
+    #hidePresentation() {
+        this.#removePresentationOverlay();
+    }
+
+    #removePresentationOverlay() {
+        if (this.#presentationEl) {
+            this.#presentationEl.remove();
+            this.#presentationEl = null;
+        }
+    }
+
+    #syncPresentationButtonLabel(isOpen) {
+        if (this.#els.presBtnIcon) {
+            this.#els.presBtnIcon.className = isOpen
+                ? 'fas fa-compress-alt text-xs'
+                : 'fas fa-expand-alt text-xs';
+        }
+        if (this.#els.presBtnLabel) {
+            this.#els.presBtnLabel.textContent = isOpen ? 'Minimera' : 'Expandera formel';
+        }
+    }
+
+    #renderPresentationContent(reading) {
+        if (!this.#presentationEl) return;
+        const content = this.#presentationEl.querySelector('[data-role="pres-content"]');
+        if (!content) return;
+        const selected = reading.selectedId == null
+            ? null
+            : reading.shapes.find(s => s.id === reading.selectedId);
+        if (!selected || !reading.showFormulas) {
+            content.innerHTML =
+                '<em style="color:#8c8d92;font-size:16px;">Välj en form och aktivera "Visa formler".</em>';
+            return;
+        }
+        const spec = getFormulaSpec(selected, reading.unit);
+        if (!spec.hasContent) {
+            content.innerHTML =
+                '<em style="color:#8c8d92;font-size:16px;">Inga formler tillgängliga.</em>';
+            return;
+        }
+        content.innerHTML = '';
+        for (const row of spec.rows) {
+            const rowEl = document.createElement('div');
+            rowEl.style.cssText =
+                'border-bottom:2px solid #eeece8;padding-bottom:10px;margin-bottom:10px;';
+            const lbl = document.createElement('div');
+            lbl.style.cssText =
+                'font-size:13px;font-weight:800;color:#8c8d92;' +
+                'text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;';
+            lbl.textContent = row.label;
+            rowEl.appendChild(lbl);
+            const line = document.createElement('div');
+            line.style.cssText =
+                'font-size:30px;font-weight:800;color:#4a4b50;line-height:1.4;' +
+                'display:flex;flex-wrap:wrap;align-items:center;gap:3px;';
+            for (const part of row.parts) {
+                if (part.type === 'text') {
+                    line.appendChild(document.createTextNode(part.value));
+                } else if (part.type === 'var') {
+                    const span = document.createElement('span');
+                    span.textContent = part.text;
+                    span.style.color = part.color || '#5b80a5';
+                    span.style.fontSize = '30px';
+                    line.appendChild(span);
+                }
+            }
+            rowEl.appendChild(line);
+            content.appendChild(rowEl);
+        }
+        if (content.lastElementChild) {
+            content.lastElementChild.style.borderBottom = 'none';
         }
     }
 }
