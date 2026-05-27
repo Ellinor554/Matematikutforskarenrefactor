@@ -42,6 +42,7 @@ export class GeometryEngine {
     #autoRotate3D = true;
     #showFormulas = false;
     #unit = 'cm';
+    #presentationOpen = false;
     #listeners = new Set();
 
     add2DShape(type, x = 100, y = 100) {
